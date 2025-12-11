@@ -123,14 +123,14 @@ data:
 
 Our models achieve competitive accuracy compared to published benchmarks:
 
-| Model | Our Accuracy | Published | Improvement |
-|-------|-------------|-----------|------------|
-| AlexNet | 98.03% | 97.8% | +0.23% |
-| ResNet50 | 98.74% | 98.5% | +0.24% |
-| InceptionV3 | 98.58% | 98.4% | +0.18% |
-| MobileNetV2 | 98.74% | 98.6% | +0.14% |
-| EfficientNetB0 | 98.50% | 98.3% | +0.20% |
-| Super Ensemble | 99.2%+ | N/A | ✓ |
+| Model | Accuracy |
+|-------|-------------|
+| AlexNet | 98.03% |
+| ResNet50 | 98.74% |
+| InceptionV3 | 98.58% |
+| MobileNetV2 | 98.74% |
+| EfficientNetB0 | 98.50% |
+| Super Ensemble | 99.2%+ |
 
 ## Deployment Formats
 
