@@ -1,0 +1,28 @@
+# Conversion Configuration
+# Location: configs/conversion_config.yaml
+
+onnx:
+  opset_version: 13
+  do_constant_folding: true
+  enable_onnx_checker: true
+  
+tflite:
+  optimization_levels:
+    - "default"      # Full precision (float32)
+    - "float16"      # Float16 quantization
+    - "dynamic_range"  # Dynamic range quantization
+  
+  inference:
+    input_dtype: "float32"
+    output_dtype: "float32"
+    
+  validation:
+    num_test_samples: 10
+    mae_threshold: 1e-6
+    cosine_similarity_threshold: 0.9999
+    relative_error_threshold: 0.001
+    
+deployment:
+  include_metadata: true
+  package_type: "tflite+pytorch+onnx"
+  export_all_formats: true

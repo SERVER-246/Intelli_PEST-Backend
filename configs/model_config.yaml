@@ -1,0 +1,29 @@
+# Model Configuration
+# Location: configs/model_config.yaml
+
+models:
+  backbones:
+    - alexnet
+    - resnet50
+    - inception_v3
+    - mobilenet_v2
+    - efficientnet_b0
+    - darknet53
+    - yolo11n-cls
+  
+  ensemble:
+    input_size: 256
+    fusion_types:
+      - attention
+      - concatenation
+      - cross
+    enable_super_ensemble: true
+    
+  classification_head:
+    dropout_rate: 0.4
+    hidden_dim: "auto"  # auto = feat_dim // 2, or specify manually
+    
+  pretraining:
+    use_pretrained: true
+    freeze_backbone_head_stage: true
+    freeze_backbone_finetune_stage: false
