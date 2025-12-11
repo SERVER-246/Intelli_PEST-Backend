@@ -246,8 +246,7 @@ If you use this project in your research, please cite:
 For issues, questions, or suggestions:
 - Open an [Issue](https://github.com/yourusername/Intelli_PEST-Backend/issues)
 - Start a [Discussion](https://github.com/yourusername/Intelli_PEST-Backend/discussions)
-- Email: your.email@example.com
-
+- Email: singh.sugam.47@gmail.com
 ## Acknowledgments
 
 - PyTorch and TensorFlow communities
