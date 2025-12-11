@@ -25,7 +25,7 @@ A professional, production-ready machine learning pipeline for pest classificati
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/Intelli_PEST-Backend.git
+git clone https://github.com/SERVER-246/Intelli_PEST-Backend.git
 cd Intelli_PEST-Backend
 
 # Create virtual environment (recommended)

@@ -22,7 +22,7 @@ Before starting, ensure you have:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/Intelli_PEST-Backend.git
+git clone https://github.com/SERVER-246/Intelli_PEST-Backend.git
 cd Intelli_PEST-Backend
 ```
 
@@ -444,7 +444,7 @@ Expected training times (on NVIDIA RTX 3080):
 
 ```bash
 # Setup
-git clone <repo-url>
+git clone https://github.com/SERVER-246/Intelli_PEST-Backend.git
 cd Intelli_PEST-Backend
 python -m venv venv
 source venv/bin/activate  # or .\venv\Scripts\activate on Windows
