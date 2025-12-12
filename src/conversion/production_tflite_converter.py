@@ -49,6 +49,11 @@ try:
 except Exception:
     from fallback_tflite_converter import FallbackTFLiteConverter
 
+try:
+    from .onnx_sanitizer import ONNXSanitizer
+except Exception:
+    from onnx_sanitizer import ONNXSanitizer
+
 # Optional converters
 try:
     from onnx_tf.backend import prepare as onnx_tf_prepare
@@ -136,15 +141,28 @@ def convert_onnx_to_saved_model_onnx2keras(onnx_path: Path, saved_model_dir: Pat
         return {'status': 'skipped', 'reason': 'onnx2keras not available'}
 
     try:
+        logger.info("Loading ONNX model...")
         onnx_model = onnx.load(str(onnx_path))
+        
+        # Sanitize ONNX model to fix TensorFlow scope name issues
+        logger.info("Sanitizing ONNX model for TensorFlow compatibility...")
+        sanitizer = ONNXSanitizer()
+        onnx_model = sanitizer.sanitize_model(onnx_model)
+        logger.info(f"✓ Sanitized {len(sanitizer.name_mapping)} node names")
+        
         # onnx2keras requires a list of input names; pick first
         input_name = onnx_model.graph.input[0].name
         
+        logger.info("Converting ONNX to Keras...")
         k_model = onnx_to_keras(onnx_model, [input_name], change_ordering=True)
+        
         # Save Keras model as SavedModel
         if saved_model_dir.exists():
             shutil.rmtree(saved_model_dir)
+        logger.info("Saving as TensorFlow SavedModel...")
         k_model.save(str(saved_model_dir), save_format='tf')
+        
+        logger.info("✓ ONNX -> Keras -> SavedModel conversion successful")
         return {'status': 'success', 'saved_model_dir': str(saved_model_dir)}
     except Exception as e:
         logger.exception(f"onnx2keras conversion failed: {e}")

@@ -201,23 +201,27 @@ class FallbackTFLiteConverter:
     
     def convert_via_onnx_tensorflow(self, model_name: str) -> dict:
         """
-        Method 1: Convert ONNX -> TensorFlow -> TFLite using onnx-tensorflow.
-        This often works for models that fail with onnx2keras.
+        Method 1: Convert ONNX -> Keras -> TFLite using onnx2keras with sanitization.
+        This often works for models that fail with standard onnx2keras.
         """
-        if not ONNX_TF_AVAILABLE:
-            raise ImportError("onnx-tensorflow not available")
+        # Import required libraries
+        try:
+            from onnx2keras import onnx_to_keras
+            from onnx_sanitizer import ONNXSanitizer
+        except ImportError as e:
+            raise ImportError(f"Required libraries not available: {e}")
         
         onnx_path = self.onnx_dir / model_name / f"{model_name}.onnx"
         
         self.logger.info(f"\n{'='*70}")
-        self.logger.info(f"Method 1: ONNX->TensorFlow Conversion: {model_name}")
+        self.logger.info(f"Method 1: ONNX->Keras Conversion (with sanitization): {model_name}")
         self.logger.info(f"{'='*70}")
         
         result = {
             'model_name': model_name,
             'onnx_path': str(onnx_path),
             'timestamp': datetime.datetime.now().isoformat(),
-            'conversion_method': 'onnx-tensorflow',
+            'conversion_method': 'onnx2keras-sanitized',
             'quantization': self.quantization
         }
         
@@ -225,36 +229,39 @@ class FallbackTFLiteConverter:
             raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
         
         # Step 1: Load ONNX
-        self.logger.info("Step 1/5: Loading ONNX model...")
+        self.logger.info("Step 1/4: Loading ONNX model...")
         onnx_model = onnx.load(str(onnx_path))
         onnx_size_mb = os.path.getsize(onnx_path) / (1024 * 1024)
         result['onnx_size_mb'] = round(onnx_size_mb, 2)
-        self.logger.info(f"  ✓ Loaded ({result['onnx_size_mb']} MB)")
+        self.logger.info(f"  Loaded ({result['onnx_size_mb']} MB)")
         
-        # Step 2: Convert ONNX to TensorFlow using onnx-tensorflow
-        self.logger.info("Step 2/5: Converting ONNX to TensorFlow (onnx-tf)...")
+        # Step 2: Sanitize ONNX model
+        self.logger.info("Step 2/4: Sanitizing ONNX for TensorFlow compatibility...")
+        sanitizer = ONNXSanitizer()
+        onnx_model = sanitizer.sanitize_model(onnx_model)
+        self.logger.info(f"  Sanitized {len(sanitizer.name_mapping)} names")
         
-        # Prepare the model - this creates a TensorFlow representation
-        tf_rep = prepare(onnx_model, strict=False)
+        # Step 3: Convert to Keras
+        self.logger.info("Step 3/4: Converting ONNX to Keras...")
+        input_name = onnx_model.graph.input[0].name
+        k_model = onnx_to_keras(onnx_model, [input_name], change_ordering=True)
+        self.logger.info("  Keras model created")
         
-        self.logger.info("  ✓ TensorFlow representation created")
-        
-        # Step 3: Export to SavedModel format
-        self.logger.info("Step 3/5: Exporting to SavedModel format...")
+        # Save as SavedModel
         temp_saved_model_dir = self.tflite_dir / f'temp_{model_name}_saved_model'
         if temp_saved_model_dir.exists():
             shutil.rmtree(temp_saved_model_dir)
         
-        tf_rep.export_graph(str(temp_saved_model_dir))
-        self.logger.info(f"  ✓ SavedModel exported")
+        k_model.save(str(temp_saved_model_dir), save_format='tf')
+        self.logger.info("  SavedModel created")
         
-        # Step 4: Convert SavedModel to TFLite
-        self.logger.info(f"Step 4/5: Converting to TFLite ({self.quantization})...")
+        k_model.save(str(temp_saved_model_dir), save_format='tf')
+        self.logger.info("  SavedModel created")
         
+        # Step 4: Convert to TFLite
+        self.logger.info(f"Step 4/4: Converting to TFLite ({self.quantization})...")
         converter = tf.lite.TFLiteConverter.from_saved_model(str(temp_saved_model_dir))
         self._apply_quantization(converter)
-        
-        # Allow flexibility for custom ops
         converter.allow_custom_ops = True
         
         tflite_model = converter.convert()
@@ -263,10 +270,10 @@ class FallbackTFLiteConverter:
         result['tflite_size_mb'] = round(tflite_size_mb, 2)
         result['compression_ratio'] = round((1 - tflite_size_mb / onnx_size_mb) * 100, 1)
         
-        self.logger.info(f"  ✓ Converted ({result['tflite_size_mb']} MB)")
-        self.logger.info(f"  ✓ Compression: {result['compression_ratio']}%")
+        self.logger.info(f"  Converted ({result['tflite_size_mb']} MB)")
+        self.logger.info(f"  Compression: {result['compression_ratio']}%")
         
-        # Step 5: Save and verify
+        # Save TFLite model
         self.logger.info("Step 5/5: Saving and verifying...")
         
         output_dir = self.tflite_dir / model_name
@@ -377,19 +384,34 @@ class FallbackTFLiteConverter:
             operator_export_type=torch.onnx.OperatorExportTypes.ONNX
         )
         
-        self.logger.info("  ✓ ONNX exported with opset 13")
+        self.logger.info("  ONNX exported with opset 13")
         
-        # Now try onnx-tensorflow conversion
-        self.logger.info("Step 3/4: Converting ONNX to TensorFlow...")
+        # Step 3: Convert ONNX to Keras using onnx2keras with sanitization
+        self.logger.info("Step 3/4: Converting ONNX to Keras (with sanitization)...")
+        
+        try:
+            from onnx2keras import onnx_to_keras
+            from onnx_sanitizer import ONNXSanitizer
+        except ImportError as e:
+            raise ImportError(f"Required libraries not available: {e}")
+        
         onnx_model = onnx.load(str(temp_onnx))
-        tf_rep = prepare(onnx_model, strict=False)
         
+        # Sanitize the ONNX model
+        sanitizer = ONNXSanitizer()
+        onnx_model = sanitizer.sanitize_model(onnx_model)
+        
+        # Convert to Keras
+        input_name = onnx_model.graph.input[0].name
+        k_model = onnx_to_keras(onnx_model, [input_name], change_ordering=True)
+        
+        # Save as SavedModel
         temp_saved_model_dir = self.tflite_dir / f'temp_{model_name}_saved_model'
         if temp_saved_model_dir.exists():
             shutil.rmtree(temp_saved_model_dir)
         
-        tf_rep.export_graph(str(temp_saved_model_dir))
-        self.logger.info("  ✓ TensorFlow model created")
+        k_model.save(str(temp_saved_model_dir), save_format='tf')
+        self.logger.info("  Keras -> SavedModel created")
         
         # Convert to TFLite
         self.logger.info(f"Step 4/4: Converting to TFLite ({self.quantization})...")
@@ -448,20 +470,19 @@ class FallbackTFLiteConverter:
         result = None
         errors = []
         
-        # Try Method 1: onnx-tensorflow
-        if ONNX_TF_AVAILABLE:
-            try:
-                self.logger.info("\nAttempting Method 1: onnx-tensorflow...")
-                result = self.convert_via_onnx_tensorflow(model_name)
-                if result['status'] == 'success':
-                    self.successful += 1
-                    self.results[model_name] = result
-                    return result
-            except Exception as e:
-                error_msg = f"Method 1 failed: {str(e)}"
-                self.logger.warning(f"  ✗ {error_msg}")
-                self.logger.debug(traceback.format_exc())
-                errors.append(error_msg)
+        # Try Method 1: onnx2keras with sanitization (works without onnx-tf)
+        try:
+            self.logger.info("\nAttempting Method 1: onnx2keras with sanitization...")
+            result = self.convert_via_onnx_tensorflow(model_name)
+            if result['status'] == 'success':
+                self.successful += 1
+                self.results[model_name] = result
+                return result
+        except Exception as e:
+            error_msg = f"Method 1 failed: {str(e)}"
+            self.logger.warning(f"  X {error_msg}")
+            self.logger.debug(traceback.format_exc())
+            errors.append(error_msg)
         
         # Try Method 2: PyTorch direct
         if TORCH_AVAILABLE:
