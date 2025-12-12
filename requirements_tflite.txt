@@ -1,0 +1,15 @@
+# Core Deep Learning Frameworks
+torch>=2.2.0
+torchvision>=0.17.0
+
+# TensorFlow and TFLite
+tensorflow>=2.18.0
+
+# ONNX and Conversion Tools
+onnx>=1.15.0
+onnx-tf>=1.10.0
+
+# Additional Utilities
+numpy>=1.26.0
+pillow>=10.0.0
+protobuf>=5.28.0

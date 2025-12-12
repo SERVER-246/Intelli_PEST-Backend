@@ -201,6 +201,17 @@ training:
 pip install -e . --force-reinstall
 ```
 
+## TFLite Conversion
+
+For converting models to TensorFlow Lite (TFLite) for mobile deployment, we provide a dedicated pipeline.
+
+**See [TFLITE_CONVERSION_GUIDE.md](TFLITE_CONVERSION_GUIDE.md) for detailed instructions.**
+
+Quick Summary:
+1.  Create the specialized environment: `python -m venv venv_tflite`
+2.  Install dependencies: `pip install -r requirements_tflite.txt`
+3.  Run conversion: `python src/conversion/pytorch_to_tflite_quantized.py`
+
 ## Contributing
 
 Contributions are welcome! Please:
