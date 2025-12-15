@@ -1,0 +1,135 @@
+{
+  "timestamp": "2025-12-12T17:17:54.895750",
+  "duration_seconds": 1554.97,
+  "summary": {
+    "total": 11,
+    "successful": 10,
+    "failed": 1
+  },
+  "models": {
+    "mobilenet_v2": {
+      "model_name": "mobilenet_v2",
+      "timestamp": "2025-12-12T16:52:02.503000",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 12.17,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 3.18,
+      "tflite_path": "tflite_models\\mobilenet_v2\\mobilenet_v2.tflite",
+      "compression_ratio": 73.9,
+      "verification": "passed",
+      "status": "success"
+    },
+    "darknet53": {
+      "model_name": "darknet53",
+      "timestamp": "2025-12-12T16:52:30.682793",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 81.28,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 20.46,
+      "tflite_path": "tflite_models\\darknet53\\darknet53.tflite",
+      "compression_ratio": 74.8,
+      "verification": "passed",
+      "status": "success"
+    },
+    "ensemble_attention": {
+      "model_name": "ensemble_attention",
+      "timestamp": "2025-12-12T16:53:36.221709",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 577.58,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 94.98,
+      "tflite_path": "tflite_models\\ensemble_attention\\ensemble_attention.tflite",
+      "compression_ratio": 83.6,
+      "verification": "passed",
+      "status": "success"
+    },
+    "ensemble_concat": {
+      "model_name": "ensemble_concat",
+      "timestamp": "2025-12-12T16:59:31.748849",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 579.58,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 95.48,
+      "tflite_path": "tflite_models\\ensemble_concat\\ensemble_concat.tflite",
+      "compression_ratio": 83.5,
+      "verification": "passed",
+      "status": "success"
+    },
+    "ensemble_cross": {
+      "model_name": "ensemble_cross",
+      "timestamp": "2025-12-12T17:03:54.455796",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 621.65,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 102.09,
+      "tflite_path": "tflite_models\\ensemble_cross\\ensemble_cross.tflite",
+      "compression_ratio": 83.6,
+      "verification": "passed",
+      "status": "success"
+    },
+    "super_ensemble": {
+      "model_name": "super_ensemble",
+      "timestamp": "2025-12-12T17:08:37.766961",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 770.28,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 138.3,
+      "tflite_path": "tflite_models\\super_ensemble\\super_ensemble.tflite",
+      "compression_ratio": 82.0,
+      "verification": "passed",
+      "status": "success"
+    },
+    "alexnet": {
+      "status": "failed",
+      "error": "Subprocess failed"
+    },
+    "resnet50": {
+      "model_name": "resnet50",
+      "timestamp": "2025-12-12T17:15:03.559151",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 98.26,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 24.83,
+      "tflite_path": "tflite_models\\resnet50\\resnet50.tflite",
+      "compression_ratio": 74.7,
+      "verification": "passed",
+      "status": "success"
+    },
+    "inception_v3": {
+      "model_name": "inception_v3",
+      "timestamp": "2025-12-12T17:16:10.004712",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 104.63,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 23.1,
+      "tflite_path": "tflite_models\\inception_v3\\inception_v3.tflite",
+      "compression_ratio": 77.9,
+      "verification": "passed",
+      "status": "success"
+    },
+    "efficientnet_b0": {
+      "model_name": "efficientnet_b0",
+      "timestamp": "2025-12-12T17:17:17.038752",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 19.19,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 5.11,
+      "tflite_path": "tflite_models\\efficientnet_b0\\efficientnet_b0.tflite",
+      "compression_ratio": 73.4,
+      "verification": "passed",
+      "status": "success"
+    },
+    "yolo11n-cls": {
+      "model_name": "yolo11n-cls",
+      "timestamp": "2025-12-12T17:17:37.254865",
+      "method": "pytorch_onnx_tf_quantized",
+      "pytorch_size_mb": 19.18,
+      "quantization": "dynamic_range",
+      "tflite_size_mb": 5.11,
+      "tflite_path": "tflite_models\\yolo11n-cls\\yolo11n-cls.tflite",
+      "compression_ratio": 73.4,
+      "verification": "passed",
+      "status": "success"
+    }
+  }
+}

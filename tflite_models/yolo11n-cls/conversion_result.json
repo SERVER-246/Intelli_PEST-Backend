@@ -1,0 +1,12 @@
+{
+  "model_name": "yolo11n-cls",
+  "timestamp": "2025-12-12T17:17:37.254865",
+  "method": "pytorch_onnx_tf_quantized",
+  "pytorch_size_mb": 19.18,
+  "quantization": "dynamic_range",
+  "tflite_size_mb": 5.11,
+  "tflite_path": "tflite_models\\yolo11n-cls\\yolo11n-cls.tflite",
+  "compression_ratio": 73.4,
+  "verification": "passed",
+  "status": "success"
+}

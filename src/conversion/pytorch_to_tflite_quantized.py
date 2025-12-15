@@ -21,11 +21,29 @@ import torch
 import onnx
 from onnx import version_converter
 import tensorflow as tf
+
+# Critical: Patch onnx2tf BEFORE importing it to prevent network timeouts
+import sys
+import importlib.util
+
+# Pre-patch the module
+if 'onnx2tf.utils.common_functions' not in sys.modules:
+    try:
+        import onnx2tf.utils.common_functions as ocf
+        original_download = ocf.download_test_image_data
+        def dummy_download_test_image_data(*args, **kwargs):
+            """Bypass network download that causes timeouts on Windows"""
+            return np.zeros((1, 3, 256, 256), dtype=np.float32)
+        ocf.download_test_image_data = dummy_download_test_image_data
+    except:
+        pass
+
 import onnx2tf
+
+# Double-check the patch is applied
 try:
     import onnx2tf.utils.common_functions
-    # Monkey patch to avoid downloading test image from GitHub which causes timeouts
-    def dummy_download_test_image_data():
+    def dummy_download_test_image_data(*args, **kwargs):
         return np.zeros((1, 3, 256, 256), dtype=np.float32)
     onnx2tf.utils.common_functions.download_test_image_data = dummy_download_test_image_data
 except Exception as e:
@@ -41,9 +59,23 @@ class PyTorchToTFLiteQuantized:
     def __init__(self, pytorch_dir: Path, tflite_dir: Path):
         self.pytorch_dir = Path(pytorch_dir)
         self.tflite_dir = Path(tflite_dir)
+        self.onnx_dir = Path(r"D:\Base-dir\onnx_models")  # Pre-converted ONNX models
         self.temp_dir = Path(r"D:\tmp\tflite_conversion")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.results = {}
+    
+    def _find_onnx_model(self, model_name: str) -> Path:
+        """Find pre-converted ONNX model file."""
+        candidates = [
+            self.onnx_dir / model_name / f"{model_name}.onnx",
+            self.onnx_dir / f"{model_name}.onnx",
+        ]
+        
+        for path in candidates:
+            if path.exists():
+                return path
+        
+        return None
     
     def _find_pytorch_model(self, model_name: str) -> Path:
         """Find PyTorch model file."""
@@ -78,48 +110,124 @@ class PyTorchToTFLiteQuantized:
         }
         
         try:
-            # Step 1: Load PyTorch model
-            logger.info("Step 1/5: Loading PyTorch model...")
-            pt_path = self._find_pytorch_model(model_name)
-            logger.info(f"  Found: {pt_path}")
+            # Check if ONNX model already exists
+            existing_onnx = self._find_onnx_model(model_name)
             
-            model = torch.jit.load(str(pt_path), map_location='cpu')
-            model.eval()
+            if existing_onnx:
+                logger.info("Step 1/5: Using pre-converted ONNX model...")
+                onnx_path = existing_onnx
+                logger.info(f"  Found: {onnx_path}")
+                
+                # Get original PyTorch size for comparison
+                pt_path = self._find_pytorch_model(model_name)
+                pt_size_mb = os.path.getsize(pt_path) / (1024 * 1024)
+                result['pytorch_size_mb'] = round(pt_size_mb, 2)
+                logger.info(f"  PyTorch: {pt_size_mb:.2f} MB")
+                logger.info(f"  ONNX: {onnx_path.stat().st_size / (1024*1024):.2f} MB")
+                
+                # Skip to step 3
+                skip_onnx_export = True
+            else:
+                # Step 1: Load PyTorch model
+                logger.info("Step 1/5: Loading PyTorch model...")
+                pt_path = self._find_pytorch_model(model_name)
+                logger.info(f"  Found: {pt_path}")
+                
+                model = torch.jit.load(str(pt_path), map_location='cpu')
+                model.eval()
+                
+                pt_size_mb = os.path.getsize(pt_path) / (1024 * 1024)
+                result['pytorch_size_mb'] = round(pt_size_mb, 2)
+                logger.info(f"  Loaded: {pt_size_mb:.2f} MB")
+                
+                # Create a wrapper to handle tracing issues with adaptive pooling
+                class ModelWrapper(torch.nn.Module):
+                    def __init__(self, original_model):
+                        super().__init__()
+                        self.model = original_model
+                    
+                    def forward(self, x):
+                        return self.model(x)
+                
+                # Wrap the model for better tracing
+                wrapped_model = ModelWrapper(model)
+                wrapped_model.eval()
+                
+                skip_onnx_export = False
             
-            pt_size_mb = os.path.getsize(pt_path) / (1024 * 1024)
-            result['pytorch_size_mb'] = round(pt_size_mb, 2)
-            logger.info(f"  Loaded: {pt_size_mb:.2f} MB")
-            
-            # Step 2: Export to ONNX
-            logger.info("Step 2/5: Exporting to ONNX...")
-            onnx_path = self.temp_dir / f"{model_name}_temp.onnx"
-            
-            sample_input = torch.randn(1, 3, 256, 256)
-            
-            # Use legacy export for ScriptModules
-            torch.onnx.export(
-                model,
-                sample_input,
-                str(onnx_path),
-                export_params=True,
-                opset_version=13,
-                do_constant_folding=True,
-                input_names=['input'],
-                output_names=['output']
-            )
-            
-            logger.info(f"  Exported ONNX: {onnx_path.stat().st_size / (1024*1024):.2f} MB")
+            if not skip_onnx_export:
+                # Step 2: Export to ONNX
+                logger.info("Step 2/5: Exporting to ONNX...")
+                onnx_path = self.temp_dir / f"{model_name}_temp.onnx"
+                
+                sample_input = torch.randn(1, 3, 256, 256)
+                
+                # Try multiple strategies for ONNX export
+                export_success = False
+                last_error = None
+                
+                # Strategy 1: Direct export with multiple opset versions
+                for opset in [17, 13, 11, 9]:
+                    try:
+                        torch.onnx.export(
+                            model,
+                            sample_input,
+                            str(onnx_path),
+                            export_params=True,
+                            opset_version=opset,
+                            do_constant_folding=True,
+                            input_names=['input'],
+                            output_names=['output']
+                        )
+                        export_success = True
+                        logger.info(f"  Exported ONNX (opset {opset}): {onnx_path.stat().st_size / (1024*1024):.2f} MB")
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                        if "adaptive_avg_pool2d" not in str(e).lower() or opset == 9:
+                            continue
+                
+                # Strategy 2: Trace the model instead of using scripted model
+                if not export_success and "adaptive_avg_pool2d" in str(last_error).lower():
+                    logger.warning("  Standard export failed, attempting with torch.jit.trace...")
+                    try:
+                        with torch.no_grad():
+                            traced_model = torch.jit.trace(wrapped_model, sample_input)
+                        
+                        torch.onnx.export(
+                            traced_model,
+                            sample_input,
+                            str(onnx_path),
+                            export_params=True,
+                            opset_version=11,
+                            do_constant_folding=True,
+                            input_names=['input'],
+                            output_names=['output']
+                        )
+                        export_success = True
+                        logger.info(f"  Exported ONNX via tracing: {onnx_path.stat().st_size / (1024*1024):.2f} MB")
+                    except Exception as e:
+                        last_error = str(e)
+                
+                if not export_success:
+                    raise RuntimeError(f"Failed to export to ONNX: {last_error}")
+
             
             # Step 3: Convert ONNX to TensorFlow SavedModel
             logger.info("Step 3/5: Converting to TensorFlow SavedModel...")
             
             saved_model_dir = self.temp_dir / f"{model_name}_saved_model"
             
+            # Disable test data download to avoid network timeouts
+            os.environ['ONNX2TF_DISABLE_STRICT_MODE'] = '1'
+            
             onnx2tf.convert(
                 input_onnx_file_path=str(onnx_path),
                 output_folder_path=str(saved_model_dir),
                 copy_onnx_input_output_names_to_tflite=False,
-                non_verbose=True
+                non_verbose=True,
+                output_integer_quantized_tflite=False,
+                quant_type='per-tensor'
             )
             
             logger.info(f"  SavedModel created")

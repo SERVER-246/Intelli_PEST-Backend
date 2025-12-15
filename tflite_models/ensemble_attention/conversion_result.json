@@ -1,0 +1,12 @@
+{
+  "model_name": "ensemble_attention",
+  "timestamp": "2025-12-12T16:53:36.221709",
+  "method": "pytorch_onnx_tf_quantized",
+  "pytorch_size_mb": 577.58,
+  "quantization": "dynamic_range",
+  "tflite_size_mb": 94.98,
+  "tflite_path": "tflite_models\\ensemble_attention\\ensemble_attention.tflite",
+  "compression_ratio": 83.6,
+  "verification": "passed",
+  "status": "success"
+}

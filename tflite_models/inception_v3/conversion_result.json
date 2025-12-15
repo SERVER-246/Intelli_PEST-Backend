@@ -1,0 +1,12 @@
+{
+  "model_name": "inception_v3",
+  "timestamp": "2025-12-12T17:16:10.004712",
+  "method": "pytorch_onnx_tf_quantized",
+  "pytorch_size_mb": 104.63,
+  "quantization": "dynamic_range",
+  "tflite_size_mb": 23.1,
+  "tflite_path": "tflite_models\\inception_v3\\inception_v3.tflite",
+  "compression_ratio": 77.9,
+  "verification": "passed",
+  "status": "success"
+}
