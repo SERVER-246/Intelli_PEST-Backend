@@ -1,0 +1,57 @@
+﻿# Intelli_PEST-Backend Training Configuration
+# Location: configs/training_config.yaml
+# This file contains training hyperparameters and settings
+
+training:
+  batch_size: 32
+  epochs_head: 40
+  epochs_finetune: 25
+  learning_rate: 0.001
+  weight_decay: 1e-5
+  warmup_epochs: 5
+  patience_head: 25
+  patience_finetune: 15
+  
+optimizer:
+  type: "AdamW"
+  beta1: 0.9
+  beta2: 0.999
+  epsilon: 1e-8
+  
+scheduler:
+  type: "OneCycleLR"
+  max_lr: 0.01
+  pct_start: 0.3
+  
+augmentation:
+  crop_scale_min: 0.85
+  crop_scale_max: 1.0
+  crop_ratio_min: 0.9
+  crop_ratio_max: 1.1
+  horizontal_flip: 0.5
+  color_jitter_brightness: 0.1
+  color_jitter_contrast: 0.1
+  color_jitter_saturation: 0.1
+  color_jitter_hue: 0.02
+  rotation: 8
+  
+data:
+  image_size: 256
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  
+multiprocessing:
+  num_workers: "auto"  # auto, 0, 2, 4, 8, etc.
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  
+device:
+  use_cuda: true
+  mixed_precision: true
+  
+reproducibility:
+  seed: 42
+  deterministic: true
+  benchmark: false

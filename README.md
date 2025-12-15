@@ -1,13 +1,23 @@
-# Intelli_PEST-Backend: PyTorch to TFLite Conversion Pipeline
+# Intelli_PEST-Backend: Complete ML Pipeline - Training to TFLite Deployment
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)]()
 [![PyTorch 2.3.1](https://img.shields.io/badge/PyTorch-2.3.1-red)]()
 [![TensorFlow 2.20](https://img.shields.io/badge/TensorFlow-2.20-orange)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Production-ready pipeline for converting pest detection models from PyTorch to TensorFlow Lite with Dynamic Range Quantization.**
+**Complete, production-ready ML pipeline for pest detection: from model training → ensemble creation → ONNX export → TensorFlow Lite conversion with Dynamic Range Quantization.**
 
-## ✅ Status: Complete
+**This repository contains the entire reproducible pipeline to train pest detection models from scratch and convert them to optimized TFLite format for mobile and edge deployment.**
+
+## ✅ Pipeline Status: Complete & Reproducible
+
+**All pipeline stages fully implemented:**
+- ✅ Base model training (7 models)
+- ✅ Ensemble model creation (4 models)  
+- ✅ ONNX conversion (with fallback mechanism)
+- ✅ TFLite conversion (all 11 models)
+- ✅ Dynamic Range Quantization
+- ✅ Test suite for validation
 
 **All 11 models successfully converted to optimized TFLite format**
 
@@ -63,41 +73,134 @@ Convert single model:
 python run_conversion.py --model mobilenet_v2
 ```
 
-## 📋 Project Structure
+## 📋 Complete Project Structure
 
 ```
 Intelli_PEST-Backend/
-├── run_conversion.py                     # Master script (entry point)
-├── requirements_tflite.txt               # Complete dependencies
-├── requirements_original.txt             # Original training requirements
+│
+├── 📄 COMPLETE_PIPELINE.md               # Full pipeline documentation
+├── 📄 run_conversion.py                  # Master TFLite conversion script
+├── 📄 requirements_tflite.txt            # All 60 dependencies (frozen)
+├── 📄 setup.py                           # Package configuration
+│
 ├── src/
-│   └── conversion/
-│       ├── pytorch_to_tflite_quantized.py    # Main conversion logic
-│       └── __init__.py
-├── tflite_models/                        # Output directory
-│   ├── mobilenet_v2/
-│   │   └── mobilenet_v2.tflite
-│   ├── darknet53/
-│   ├── resnet50/
-│   ├── inception_v3/
-│   ├── efficientnet_b0/
-│   ├── yolo11n-cls/
-│   ├── alexnet/
-│   ├── ensemble_attention/
-│   ├── ensemble_concat/
-│   ├── ensemble_cross/
-│   └── super_ensemble/
-├── configs/
-├── data/
-├── docs/
-├── scripts/
-├── tests/
-└── setup.py
+│   ├── training/                         # MODEL TRAINING STAGE
+│   │   ├── base_training.py              # Train 7 individual models
+│   │   ├── ensemble_training.py          # Create 4 ensemble models
+│   │   └── __init__.py
+│   │
+│   ├── conversion/                       # TFLITE CONVERSION STAGE
+│   │   ├── pytorch_to_tflite_quantized.py    # Core conversion engine
+│   │   └── __init__.py
+│   │
+│   ├── deployment/                       # Deployment utilities
+│   │   └── __init__.py
+│   │
+│   └── utils/                            # Shared utilities
+│
+├── configs/                              # Configuration files
+│   ├── training_config.yaml              # Training hyperparameters
+│   ├── model_config.yaml                 # Model architectures
+│   └── conversion_config.yaml            # Conversion settings
+│
+├── docs/                                 # Documentation
+│   ├── INSTALLATION.md                   # Environment setup
+│   └── TRAINING_GUIDE.md                 # Training instructions
+│
+├── scripts/                              # Utility scripts
+│   └── check_models.py                   # Model verification
+│
+├── tests/                                # Test suite
+│   ├── test_training.py                  # Training validation
+│   ├── test_conversion.py                # Conversion tests
+│   └── test_inference.py                 # Inference tests
+│
+└── tflite_models/                        # FINAL OUTPUT (Phase 5)
+    ├── mobilenet_v2/
+    │   ├── mobilenet_v2.tflite           # Optimized model
+    │   ├── conversion_result.json        # Metadata
+    │   └── android_metadata.json         # Android config
+    ├── darknet53/
+    ├── resnet50/
+    ├── inception_v3/
+    ├── efficientnet_b0/
+    ├── yolo11n-cls/
+    ├── alexnet/
+    ├── ensemble_attention/
+    ├── ensemble_concat/
+    ├── ensemble_cross/
+    └── super_ensemble/
 ```
 
-## 🔧 Conversion Pipeline Details
+## 🔄 Complete Pipeline Stages
 
-### Process Flow
+### **STAGE 1: Model Training** (Optional - Pre-trained models available)
+```bash
+python -m src.training.base_training \
+    --data_path "path/to/data" \
+    --output_dir "./checkpoints" \
+    --epochs 100
+```
+**Outputs 7 models**: MobileNetV2, ResNet50, InceptionV3, EfficientNetB0, YOLOv11n-cls, DarkNet53, AlexNet
+
+### **STAGE 2: Ensemble Model Creation** (Optional - Pre-trained models available)
+```bash
+python -m src.training.ensemble_training \
+    --checkpoint_dir "./checkpoints" \
+    --output_dir "./checkpoints"
+```
+**Outputs 4 ensemble models**: Attention, Concatenation, Cross-Attention, Super Ensemble
+
+### **STAGE 3: ONNX Conversion** (Pre-converted models available in Base-dir/onnx_models/)
+- Converts PyTorch models to ONNX intermediate format
+- Includes fallback mechanism for adaptive pooling compatibility
+- Stored in: `Base-dir/onnx_models/` for re-use and verification
+
+### **STAGE 4: TFLite Conversion** (Main focus - FULLY AUTOMATED)
+```bash
+python run_conversion.py
+```
+**Converts all 11 models** with Dynamic Range Quantization
+
+### **STAGE 5: Validation & Testing**
+```bash
+python -m pytest tests/
+python scripts/check_models.py
+```
+**Verifies all conversions** and model integrity
+
+## 🚀 Quick Start Guide
+
+### For Users With Pre-Trained Models (TFLite Conversion Only)
+
+```bash
+# Step 1: Clone repository
+git clone https://github.com/SERVER-246/Intelli_PEST-Backend
+cd Intelli_PEST-Backend
+
+# Step 2: Create environment
+python -m venv venv_tflite
+.\venv_tflite\Scripts\activate  # Windows
+# OR
+source venv_tflite/bin/activate  # Linux/Mac
+
+# Step 3: Install dependencies
+pip install -r requirements_tflite.txt
+
+# Step 4: Run TFLite conversion
+python run_conversion.py
+
+# Step 5: Check outputs
+ls tflite_models/  # All 11 .tflite files
+```
+
+### For Researchers (Complete Pipeline from Training)
+
+```bash
+# Follow installation in docs/INSTALLATION.md
+# Run training in docs/TRAINING_GUIDE.md
+# Then follow TFLite conversion above
+```
 
 ```
 PyTorch Model (.pt)
