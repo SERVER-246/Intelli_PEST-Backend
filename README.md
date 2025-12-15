@@ -418,7 +418,7 @@ If you use this pipeline in your research, please cite:
 
 ```bibtex
 @software{intellipest_backend,
-  author = {Your Name},
+  author = Sugam Singh,
   title = {Intelli_PEST-Backend: PyTorch to TFLite Conversion Pipeline},
   year = {2025},
   url = {https://github.com/SERVER-246/Intelli_PEST-Backend}
