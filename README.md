@@ -37,7 +37,70 @@
 
 **Total: 2.96 GB → 693.01 MB (76.6% compression)**
 
-## 🚀 Quick Start
+## 🚀 Master Pipeline Script: Complete Automation
+
+**NEW: Use the `pipeline.py` script to run the entire pipeline with a single command!**
+
+### One-Command Pipeline Execution
+
+```bash
+# Run complete pipeline (Training → Ensemble → ONNX → TFLite → Validation)
+python pipeline.py
+```
+
+### Run Specific Stages
+
+```bash
+# Stage 1: Train base models (7 models)
+python pipeline.py --stage training --epochs 100 --data_path /path/to/data
+
+# Stage 2: Create ensemble models (4 models)
+python pipeline.py --stage ensemble
+
+# Stage 3: ONNX export (pre-converted, uses fallback)
+python pipeline.py --stage onnx
+
+# Stage 4: Convert to TFLite with quantization (11 models)
+python pipeline.py --stage conversion --verbose
+
+# Stage 5: Validate and test all models
+python pipeline.py --stage validation
+```
+
+### Custom Configuration
+
+```bash
+# Custom paths and hyperparameters
+python pipeline.py \
+    --data_path /path/to/training/data \
+    --checkpoint_dir ./my_checkpoints \
+    --output_dir ./my_tflite_models \
+    --epochs 150 \
+    --batch_size 64 \
+    --learning_rate 0.0001 \
+    --verbose
+```
+
+### Pipeline Options
+
+```bash
+python pipeline.py --help
+```
+
+**Common options:**
+- `--stage` - Run specific stage (training, ensemble, onnx, conversion, validation)
+- `--data_path` - Path to training dataset
+- `--checkpoint_dir` - Directory for model checkpoints
+- `--output_dir` - Directory for TFLite output
+- `--epochs` - Number of training epochs (default: 100)
+- `--batch_size` - Training batch size (default: 32)
+- `--learning_rate` - Learning rate (default: 0.001)
+- `--verbose` - Enable verbose output
+- `--continue_on_error` - Continue to next stage on errors
+
+## 🚀 Quick Start (TFLite Conversion Only)
+
+If you just want to convert pre-trained models to TFLite:
 
 ### 1. Create Virtual Environment
 
@@ -61,16 +124,21 @@ source venv_tflite/bin/activate
 pip install -r requirements_tflite.txt
 ```
 
-### 3. Run Conversion Pipeline
+### 3. Run TFLite Conversion Only
 
-Convert all 11 models:
+For quick TFLite conversion (pre-trained models):
 ```bash
 python run_conversion.py
 ```
 
-Convert single model:
+Or convert a single model:
 ```bash
 python run_conversion.py --model mobilenet_v2
+```
+
+**Or for complete pipeline from training:**
+```bash
+python pipeline.py --stage conversion
 ```
 
 ## 📋 Complete Project Structure
@@ -78,13 +146,17 @@ python run_conversion.py --model mobilenet_v2
 ```
 Intelli_PEST-Backend/
 │
+├── 📄 pipeline.py                        # MASTER SCRIPT (NEW!)
+│                                         # Complete automation: training → TFLite
 ├── 📄 COMPLETE_PIPELINE.md               # Full pipeline documentation
-├── 📄 run_conversion.py                  # Master TFLite conversion script
+├── 📄 run_conversion.py                  # TFLite conversion script
 ├── 📄 requirements_tflite.txt            # All 60 dependencies (frozen)
 ├── 📄 setup.py                           # Package configuration
 │
 ├── src/
 │   ├── training/                         # MODEL TRAINING STAGE
+│   │   ├── base_training.py              # Train 7 individual models
+│   │   ├── ensemble_training.py          # Create 4 ensemble models
 │   │   ├── base_training.py              # Train 7 individual models
 │   │   ├── ensemble_training.py          # Create 4 ensemble models
 │   │   └── __init__.py
@@ -134,40 +206,44 @@ Intelli_PEST-Backend/
 
 ## 🔄 Complete Pipeline Stages
 
-### **STAGE 1: Model Training** (Optional - Pre-trained models available)
+### Use Master `pipeline.py` Script for Full Automation
+
 ```bash
-python -m src.training.base_training \
-    --data_path "path/to/data" \
-    --output_dir "./checkpoints" \
-    --epochs 100
+# Run entire pipeline
+python pipeline.py
+
+# Run specific stage
+python pipeline.py --stage training|ensemble|onnx|conversion|validation
+
+# With custom parameters
+python pipeline.py --epochs 100 --batch_size 32 --data_path /path/to/data --verbose
 ```
-**Outputs 7 models**: MobileNetV2, ResNet50, InceptionV3, EfficientNetB0, YOLOv11n-cls, DarkNet53, AlexNet
 
-### **STAGE 2: Ensemble Model Creation** (Optional - Pre-trained models available)
+### Stage Details
+
+| Stage | Script | Command | Output |
+|-------|--------|---------|--------|
+| 1. Training (7 models) | `base_training.py` | `python pipeline.py --stage training` | PyTorch .pt files |
+| 2. Ensemble (4 models) | `ensemble_training.py` | `python pipeline.py --stage ensemble` | Ensemble .pt files |
+| 3. ONNX Export | Pre-converted | `python pipeline.py --stage onnx` | ONNX ready |
+| 4. TFLite Conversion | `run_conversion.py` | `python pipeline.py --stage conversion` | 11 .tflite files |
+| 5. Validation | Tests | `python pipeline.py --stage validation` | Test report |
+
+### Alternative: Run Stages Directly
+
 ```bash
-python -m src.training.ensemble_training \
-    --checkpoint_dir "./checkpoints" \
-    --output_dir "./checkpoints"
-```
-**Outputs 4 ensemble models**: Attention, Concatenation, Cross-Attention, Super Ensemble
+# Stage 1: Train base models (1-2 hours on GPU)
+python -m src.training.base_training --data_path "path/to/data" --epochs 100
 
-### **STAGE 3: ONNX Conversion** (Pre-converted models available in Base-dir/onnx_models/)
-- Converts PyTorch models to ONNX intermediate format
-- Includes fallback mechanism for adaptive pooling compatibility
-- Stored in: `Base-dir/onnx_models/` for re-use and verification
+# Stage 2: Create ensemble models (30 minutes)
+python -m src.training.ensemble_training --checkpoint_dir "./checkpoints"
 
-### **STAGE 4: TFLite Conversion** (Main focus - FULLY AUTOMATED)
-```bash
+# Stage 4: Convert to TFLite (15-30 minutes)
 python run_conversion.py
-```
-**Converts all 11 models** with Dynamic Range Quantization
 
-### **STAGE 5: Validation & Testing**
-```bash
-python -m pytest tests/
-python scripts/check_models.py
+# Stage 5: Validate
+python -m pytest tests/ -v
 ```
-**Verifies all conversions** and model integrity
 
 ## 🚀 Quick Start Guide
 
