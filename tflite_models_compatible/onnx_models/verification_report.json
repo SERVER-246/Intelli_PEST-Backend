@@ -1,0 +1,268 @@
+{
+  "timestamp": "2025-12-18T13:09:59.300825",
+  "source": "D:\\pest-detection-models-v1.0.0\\models",
+  "destination": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models",
+  "class_names": {
+    "0": "Healthy",
+    "1": "Internode borer",
+    "2": "Pink borer",
+    "3": "Rat damage",
+    "4": "Stalk borer",
+    "5": "Top borer",
+    "6": "Army worm",
+    "7": "Mealy bug",
+    "8": "Porcupine damage",
+    "9": "Root borer",
+    "10": "Termite"
+  },
+  "expected_num_classes": 11,
+  "models": {
+    "alexnet": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 171.71,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\alexnet.onnx"
+    },
+    "darknet53": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 80.54,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\darknet53.onnx"
+    },
+    "efficientnet_b0": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 18.46,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\efficientnet_b0.onnx"
+    },
+    "ensemble_attention": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 370.74,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\ensemble_attention.onnx"
+    },
+    "ensemble_concat": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 372.72,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\ensemble_concat.onnx"
+    },
+    "ensemble_cross": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 398.77,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\ensemble_cross.onnx"
+    },
+    "inception_v3": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 91.16,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\inception_v3.onnx"
+    },
+    "mobilenet_v2": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 11.63,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\mobilenet_v2.onnx"
+    },
+    "resnet50": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 97.67,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\resnet50.onnx"
+    },
+    "super_ensemble": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 544.37,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\super_ensemble.onnx"
+    },
+    "yolo11n-cls": {
+      "status": "success",
+      "input_name": "input",
+      "input_shape": [
+        "batch_size",
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "tensor(float)",
+      "output_name": "output",
+      "output_shape": [
+        "batch_size",
+        11
+      ],
+      "num_classes": 11,
+      "class_mapping_valid": true,
+      "inference_valid": true,
+      "opset_version": 13,
+      "file_size_mb": 18.46,
+      "copied_to": "D:\\Intelli_PEST-Backend\\tflite_models_compatible\\onnx_models\\yolo11n-cls.onnx"
+    }
+  },
+  "summary": {
+    "total": 11,
+    "valid": 11,
+    "copied": 11
+  }
+}
