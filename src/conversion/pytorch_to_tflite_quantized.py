@@ -20,7 +20,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import torch
 import onnx
 from onnx import version_converter
-import tensorflow as tf
+import tensorflow as tf  # type: ignore[import-unresolved]
 
 # Critical: Patch onnx2tf BEFORE importing it to prevent network timeouts
 import sys

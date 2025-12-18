@@ -1,0 +1,79 @@
+{
+  "generated_at": "2025-12-18T10:36:41.656213",
+  "converter": "legacy_compatible",
+  "target_runtime": "TFLite 2.14.0+",
+  "compatibility_mode": "maximum_backward_compat",
+  "settings": {
+    "experimental_new_converter": false,
+    "experimental_new_quantizer": false,
+    "supported_ops": [
+      "TFLITE_BUILTINS"
+    ],
+    "optimizations": [
+      "DEFAULT"
+    ]
+  },
+  "models": {
+    "mobilenet_v2": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "resnet50": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "inception_v3": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 299
+    },
+    "efficientnet_b0": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "darknet53": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "alexnet": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "yolo11n-cls": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "ensemble_attention": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "ensemble_concat": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "ensemble_cross": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    },
+    "super_ensemble": {
+      "status": "skipped",
+      "error": "ONNX model not found",
+      "input_size": 224
+    }
+  },
+  "input_format": {
+    "tensor_format": "NHWC",
+    "data_type": "float32",
+    "normalization": "divide by 255.0 (0-1 range)",
+    "channel_order": "RGB"
+  }
+}

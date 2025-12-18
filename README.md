@@ -21,21 +21,36 @@
 
 **All 11 models successfully converted to optimized TFLite format**
 
-| Model | PyTorch Size | TFLite Size | Compression |
-|-------|--------------|-------------|-------------|
-| mobilenet_v2 | 12.17 MB | 3.18 MB | 73.9% |
-| darknet53 | 81.28 MB | 20.45 MB | 74.8% |
-| resnet50 | 98.26 MB | 24.83 MB | 74.7% |
-| inception_v3 | 104.63 MB | 23.10 MB | 77.9% |
-| efficientnet_b0 | 19.19 MB | 5.10 MB | 73.4% |
-| yolo11n-cls | 19.18 MB | 5.10 MB | 73.4% |
-| alexnet | 171.74 MB | 164.48 MB | 4.2% |
-| ensemble_attention | 577.58 MB | 99.59 MB | 82.8% |
-| ensemble_concat | 579.58 MB | 100.11 MB | 82.8% |
-| ensemble_cross | 621.65 MB | 107.05 MB | 82.8% |
-| super_ensemble | 770.28 MB | 145.02 MB | 81.2% |
+| Model | PyTorch Size | TFLite Size | Compression | Input Shape | Classes |
+|-------|--------------|-------------|-------------|-------------|---------|
+| mobilenet_v2 | 12.17 MB | 3.18 MB | 73.9% | [1,256,256,3] | 11 |
+| darknet53 | 81.28 MB | 20.46 MB | 74.8% | [1,256,256,3] | 11 |
+| resnet50 | 98.26 MB | 24.83 MB | 74.7% | [1,256,256,3] | 11 |
+| inception_v3 | 104.63 MB | 23.10 MB | 77.9% | [1,256,256,3] | 11 |
+| efficientnet_b0 | 19.19 MB | 5.11 MB | 73.4% | [1,256,256,3] | 11 |
+| yolo11n-cls | 19.18 MB | 5.11 MB | 73.4% | [1,256,256,3] | 11 |
+| alexnet | 171.74 MB | 164.48 MB | 4.2% | [1,256,256,3] | 11 |
+| ensemble_attention | 577.58 MB | 94.98 MB | 83.6% | [1,256,256,3] | 11 |
+| ensemble_concat | 579.58 MB | 95.48 MB | 83.5% | [1,256,256,3] | 11 |
+| ensemble_cross | 621.65 MB | 102.09 MB | 83.6% | [1,256,256,3] | 11 |
+| super_ensemble | 770.28 MB | 138.30 MB | 82.0% | [1,256,256,3] | 11 |
 
-**Total: 2.96 GB → 693.01 MB (76.6% compression)**
+**Total: 2.96 GB → 677.02 MB (77.2% compression)**
+
+### Class Labels (11 Classes)
+```
+0: Healthy
+1: Internode borer
+2: Pink borer
+3: Rat damage
+4: Stalk borer
+5: Top borer
+6: Army worm
+7: Mealy bug
+8: Porcupine damage
+9: Root borer
+10: Termite
+```
 
 ## 🚀 Master Pipeline Script: Complete Automation
 

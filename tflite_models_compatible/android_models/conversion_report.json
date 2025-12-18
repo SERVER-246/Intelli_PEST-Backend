@@ -1,0 +1,128 @@
+{
+  "generated_at": "2025-12-18T12:26:28.652490",
+  "class_names": {
+    "0": "Healthy",
+    "1": "Internode borer",
+    "2": "Pink borer",
+    "3": "Rat damage",
+    "4": "Stalk borer",
+    "5": "Top borer",
+    "6": "Army worm",
+    "7": "Mealy bug",
+    "8": "Porcupine damage",
+    "9": "Root borer",
+    "10": "Termite"
+  },
+  "models": {
+    "mobilenet_v2": {
+      "status": "success",
+      "size_mb": 3.18,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "resnet50": {
+      "status": "success",
+      "size_mb": 24.83,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "inception_v3": {
+      "status": "success",
+      "size_mb": 23.1,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "efficientnet_b0": {
+      "status": "success",
+      "size_mb": 5.11,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "darknet53": {
+      "status": "success",
+      "size_mb": 20.46,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "alexnet": {
+      "status": "success",
+      "size_mb": 164.48,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "yolo11n-cls": {
+      "status": "success",
+      "size_mb": 5.11,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "ensemble_attention": {
+      "status": "success",
+      "size_mb": 94.98,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "ensemble_concat": {
+      "status": "success",
+      "size_mb": 95.48,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "ensemble_cross": {
+      "status": "success",
+      "size_mb": 102.09,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    },
+    "super_ensemble": {
+      "status": "success",
+      "size_mb": 138.3,
+      "input_shape": [
+        1,
+        256,
+        256,
+        3
+      ]
+    }
+  }
+}

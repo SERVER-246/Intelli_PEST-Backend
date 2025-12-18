@@ -17,7 +17,9 @@ keras==3.12.0
 
 # ONNX & Model Conversion Tools
 onnx==1.16.0
+onnxruntime==1.17.3
 onnx2tf==1.25.15
+onnx-tf==1.10.0
 onnx-graphsurgeon==0.5.8
 onnxsim==0.4.36
 sng4onnx==1.0.4
