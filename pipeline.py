@@ -38,8 +38,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger('Pipeline')
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 
 class MasterPipeline:
@@ -73,7 +73,7 @@ class MasterPipeline:
         logger.info("="*70)
         
         try:
-            from training.base_training import BaseModelTrainer
+            from src.training.base_training import BaseModelTrainer
             
             trainer = BaseModelTrainer(
                 data_path=self.data_path,
@@ -112,7 +112,7 @@ class MasterPipeline:
         logger.info("="*70)
         
         try:
-            from training.ensemble_training import EnsembleTrainer
+            from src.training.ensemble_training import EnsembleTrainer
             
             ensemble_trainer = EnsembleTrainer(
                 checkpoint_dir=self.checkpoint_dir,
@@ -162,7 +162,7 @@ class MasterPipeline:
         logger.info("="*70)
         
         try:
-            from conversion.pytorch_to_tflite_quantized import PyTorchToTFLiteQuantized
+            from src.conversion.pytorch_to_tflite_quantized import PyTorchToTFLiteQuantized
             
             converter = PyTorchToTFLiteQuantized(
                 pytorch_dir=self.checkpoint_dir,
