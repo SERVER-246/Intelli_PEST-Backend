@@ -31,7 +31,7 @@ except ImportError:
     logger.warning("onnxruntime not available - ONNX models will be skipped")
 
 try:
-    import tensorflow as tf
+    import tensorflow as tf  # type: ignore[import-unresolved]
     TFLITE_AVAILABLE = True
 except ImportError:
     TFLITE_AVAILABLE = False

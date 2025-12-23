@@ -131,8 +131,8 @@ student:
 # ============================================================
 training:
   # Sequential training settings
-  epochs_per_teacher: 5  # Epochs for each teacher
-  final_ensemble_epochs: 15  # Final refinement with all teachers
+  epochs_per_teacher: 20  # Epochs for each teacher (20 x 11 = 220 epochs)
+  final_ensemble_epochs: 30  # Final refinement with all teachers
   
   # Knowledge distillation settings
   temperature: 4.0  # Higher = softer distributions
