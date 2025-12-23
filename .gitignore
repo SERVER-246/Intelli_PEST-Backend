@@ -40,14 +40,28 @@ env/
 .ipynb_checkpoints/
 *.ipynb
 
-# Data and Models (Too large for git)
+# Data and Models (Large files - use Git LFS or download separately)
+# Note: Model files should be downloaded from releases or trained locally
 data/
 outputs/
-checkpoints/
+checkpoints/*.pt
+checkpoints/*.pth
+
+# Keep model metadata but ignore actual models
 *.pth
-*.pt
-*.onnx
-*.tflite
+!model_metadata.json
+!*_metadata.json
+
+# Large model files (download from releases or train locally)
+tflite_models_compatible/android_models/*.tflite
+tflite_models_compatible/onnx_models/*.onnx
+knowledge_distillation/models/**/*.pt
+knowledge_distillation/models/**/*.onnx
+knowledge_distillation/models/**/*.tflite
+knowledge_distillation/checkpoints/
+knowledge_distillation/logs/
+knowledge_distillation/metrics/
+knowledge_distillation/plots/
 *.h5
 *.pkl
 *.joblib

@@ -1,8 +1,0 @@
-{
-  "model_name": "alexnet",
-  "timestamp": "2025-12-12T17:15:00.232873",
-  "method": "pytorch_onnx_tf_quantized",
-  "pytorch_size_mb": 171.74,
-  "status": "failed",
-  "error": "Failed to export to ONNX: Unsupported: ONNX export of operator adaptive_avg_pool2d, output size that are not factor of input size. Please feel free to request support or submit a pull request on PyTorch GitHub: https://github.com/pytorch/pytorch/issues  [Caused by the value '23 defined in (%23 : Long(2, strides=[1], device=cpu) = onnx::Constant[value= 6  6 [ CPULongType{2} ]]()\n)' (type 'Tensor') in the TorchScript graph. The containing node has kind 'onnx::Constant'.] \n\n    Inputs:\n        Empty\n    Outputs:\n        #0: 23 defined in (%23 : Long(2, strides=[1], device=cpu) = onnx::Constant[value= 6  6 [ CPULongType{2} ]]()\n    )  (type 'Tensor')"
-}

@@ -1,0 +1,178 @@
+# Knowledge Distillation Configuration
+# =====================================
+# Purpose: Train a lightweight student model using 11 teacher models
+# Author: Intelli-PEST Backend Team
+# Updated: 2024-12-23
+
+# ============================================================
+# Dataset Configuration
+# ============================================================
+dataset:
+  # UPDATE THIS PATH to your dataset location
+  path: "G:/AI work/IMAGE DATASET"
+  num_classes: 12
+  image_size: 256
+  train_split: 0.8
+  val_split: 0.2
+  batch_size: 32
+  num_workers: 4
+  
+  # Class names (alphabetical order as loaded by ImageFolder)
+  class_names:
+    - "Fall army worm"
+    - "Healthy"
+    - "Internode borer"
+    - "Pink borer"
+    - "Rat damage"
+    - "Stalk borer"
+    - "Top borer"
+    - "army worm"
+    - "mealy bug"
+    - "porcupine   damage"
+    - "root borer"
+    - "termite"
+
+# ============================================================
+# Teacher Models Configuration (11 ONNX models)
+# ============================================================
+teachers:
+  # Path relative to repo root, or absolute path
+  models_dir: "../tflite_models_compatible/onnx_models"
+  teacher_num_classes: 11
+  models:
+    - name: "mobilenet_v2"
+      path: "mobilenet_v2.onnx"
+      weight: 1.0
+    - name: "resnet50"
+      path: "resnet50.onnx"
+      weight: 1.0
+    - name: "inception_v3"
+      path: "inception_v3.onnx"
+      weight: 1.0
+    - name: "efficientnet_b0"
+      path: "efficientnet_b0.onnx"
+      weight: 1.0
+    - name: "darknet53"
+      path: "darknet53.onnx"
+      weight: 1.0
+    - name: "alexnet"
+      path: "alexnet.onnx"
+      weight: 1.0
+    - name: "yolo11n-cls"
+      path: "yolo11n-cls.onnx"
+      weight: 1.0
+    - name: "ensemble_attention"
+      path: "ensemble_attention.onnx"
+      weight: 1.5
+    - name: "ensemble_concat"
+      path: "ensemble_concat.onnx"
+      weight: 1.5
+    - name: "ensemble_cross"
+      path: "ensemble_cross.onnx"
+      weight: 1.5
+    - name: "super_ensemble"
+      path: "super_ensemble.onnx"
+      weight: 2.0
+
+# ============================================================
+# Student Model Configuration
+# ============================================================
+student:
+  architecture: "CustomCNN"
+  target_size_mb: 15
+  num_classes: 12
+  input_channels: 3
+  input_size: 256
+  channels: [32, 64, 128, 256, 512]
+  use_batch_norm: true
+  use_dropout: true
+  dropout_rate: 0.3
+  activation: "relu"
+  use_depthwise_separable: true
+
+# ============================================================
+# Knowledge Distillation Configuration
+# ============================================================
+distillation:
+  temperature: 4.0
+  alpha: 0.7  # Weight for soft label loss
+  beta: 0.3   # Weight for hard label loss
+  use_feature_distillation: true
+  feature_loss_weight: 0.1
+  use_attention_transfer: false
+  attention_loss_weight: 0.05
+
+# ============================================================
+# Training Configuration
+# ============================================================
+training:
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adamw"
+  scheduler: "cosine"
+  warmup_epochs: 5
+  early_stopping:
+    enabled: true
+    patience: 15
+    min_delta: 0.001
+    monitor: "val_accuracy"
+  gradient_clip: 1.0
+  use_amp: true
+  augmentation:
+    horizontal_flip: true
+    vertical_flip: false
+    rotation: 15
+    color_jitter: true
+    random_crop: true
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+# ============================================================
+# Export Configuration
+# ============================================================
+export:
+  pytorch:
+    enabled: true
+    path: "models/student/pytorch"
+    filename: "student_model.pt"
+  onnx:
+    enabled: true
+    path: "models/student/onnx"
+    filename: "student_model.onnx"
+    opset_version: 13
+    dynamic_axes: false
+  tflite:
+    enabled: true
+    path: "models/student/tflite"
+    filename: "student_model.tflite"
+    quantization: "dynamic"
+    tf_version_target: "2.14"
+
+# ============================================================
+# Logging Configuration
+# ============================================================
+logging:
+  level: "INFO"
+  log_dir: "logs"
+  tensorboard: true
+  save_frequency: 5
+  metrics:
+    - "loss"
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "confusion_matrix"
+    - "per_class_accuracy"
+
+# ============================================================
+# Output Paths (relative to knowledge_distillation folder)
+# ============================================================
+paths:
+  root: "."
+  checkpoints: "checkpoints"
+  logs: "logs"
+  metrics: "metrics"
+  models: "models"

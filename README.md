@@ -1,458 +1,242 @@
-# Intelli_PEST-Backend: Complete ML Pipeline - Training to TFLite Deployment
+# Intelli-PEST Backend
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)]()
-[![PyTorch 2.3.1](https://img.shields.io/badge/PyTorch-2.3.1-red)]()
-[![TensorFlow 2.20](https://img.shields.io/badge/TensorFlow-2.20-orange)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PyTorch 2.3+](https://img.shields.io/badge/PyTorch-2.3%2B-red)]()
+[![TensorFlow 2.14+](https://img.shields.io/badge/TensorFlow-2.14%2B-orange)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**Complete, production-ready ML pipeline for pest detection: from model training → ensemble creation → ONNX export → TensorFlow Lite conversion with Dynamic Range Quantization.**
+Complete ML pipeline for sugarcane pest detection: **Training → Ensemble Models → Knowledge Distillation → Mobile Deployment**
 
-**This repository contains the entire reproducible pipeline to train pest detection models from scratch and convert them to optimized TFLite format for mobile and edge deployment.**
+## 🎯 Overview
 
-## ✅ Pipeline Status: Complete & Reproducible
+This repository contains:
+1. **11 Pre-trained Teacher Models** - Base models + ensemble architectures
+2. **Knowledge Distillation Pipeline** - Train lightweight student models
+3. **Multi-Format Export** - PyTorch, ONNX, TFLite for any deployment
 
-**All pipeline stages fully implemented:**
-- ✅ Base model training (7 models)
-- ✅ Ensemble model creation (4 models)  
-- ✅ ONNX conversion (with fallback mechanism)
-- ✅ TFLite conversion (all 11 models)
-- ✅ Dynamic Range Quantization
-- ✅ Test suite for validation
+## 📊 Model Summary
 
-**All 11 models successfully converted to optimized TFLite format**
+### Teacher Models (11 Total)
 
-| Model | PyTorch Size | TFLite Size | Compression | Input Shape | Classes |
-|-------|--------------|-------------|-------------|-------------|---------|
-| mobilenet_v2 | 12.17 MB | 3.18 MB | 73.9% | [1,256,256,3] | 11 |
-| darknet53 | 81.28 MB | 20.46 MB | 74.8% | [1,256,256,3] | 11 |
-| resnet50 | 98.26 MB | 24.83 MB | 74.7% | [1,256,256,3] | 11 |
-| inception_v3 | 104.63 MB | 23.10 MB | 77.9% | [1,256,256,3] | 11 |
-| efficientnet_b0 | 19.19 MB | 5.11 MB | 73.4% | [1,256,256,3] | 11 |
-| yolo11n-cls | 19.18 MB | 5.11 MB | 73.4% | [1,256,256,3] | 11 |
-| alexnet | 171.74 MB | 164.48 MB | 4.2% | [1,256,256,3] | 11 |
-| ensemble_attention | 577.58 MB | 94.98 MB | 83.6% | [1,256,256,3] | 11 |
-| ensemble_concat | 579.58 MB | 95.48 MB | 83.5% | [1,256,256,3] | 11 |
-| ensemble_cross | 621.65 MB | 102.09 MB | 83.6% | [1,256,256,3] | 11 |
-| super_ensemble | 770.28 MB | 138.30 MB | 82.0% | [1,256,256,3] | 11 |
+| Model | Type | TFLite Size | Classes |
+|-------|------|-------------|---------|
+| MobileNetV2 | Base | 3.18 MB | 11 |
+| ResNet50 | Base | 24.83 MB | 11 |
+| InceptionV3 | Base | 23.10 MB | 11 |
+| EfficientNet-B0 | Base | 5.11 MB | 11 |
+| DarkNet53 | Base | 20.46 MB | 11 |
+| AlexNet | Base | 164.48 MB | 11 |
+| YOLO11n-cls | Base | 5.11 MB | 11 |
+| Ensemble-Attention | Ensemble | 94.98 MB | 11 |
+| Ensemble-Concat | Ensemble | 95.48 MB | 11 |
+| Ensemble-Cross | Ensemble | 102.09 MB | 11 |
+| Super-Ensemble | Ensemble | 138.30 MB | 11 |
 
-**Total: 2.96 GB → 677.02 MB (77.2% compression)**
+### Student Model (Knowledge Distillation)
 
-### Class Labels (11 Classes)
+| Metric | Value |
+|--------|-------|
+| Architecture | Custom CNN |
+| Parameters | ~1.3M |
+| Model Size | ~5 MB |
+| Input Size | 256×256×3 |
+| Output Classes | 12 |
+
+## 📁 Repository Structure
+
 ```
-0: Healthy
-1: Internode borer
-2: Pink borer
-3: Rat damage
-4: Stalk borer
-5: Top borer
-6: Army worm
-7: Mealy bug
-8: Porcupine damage
-9: Root borer
-10: Termite
+Intelli_PEST-Backend/
+├── knowledge_distillation/          # 🎓 Student model training
+│   ├── train.py                     # Main training script
+│   ├── configs/config.yaml          # Training configuration
+│   ├── src/                         # Source modules
+│   │   ├── student_model.py         # CNN architecture
+│   │   ├── dataset.py               # Data loading
+│   │   ├── trainer.py               # KD training loop
+│   │   ├── evaluator.py             # Metrics & visualization
+│   │   └── exporter.py              # Model export
+│   └── models/student/              # Exported models
+│       ├── pytorch/                 # .pt files
+│       ├── onnx/                    # .onnx files
+│       └── tflite/                  # .tflite files
+│
+├── tflite_models_compatible/        # 📱 Android-ready models
+│   ├── android_models/              # TFLite models (11 total)
+│   ├── onnx_models/                 # ONNX models (11 total)
+│   └── model_metadata.json          # Model information
+│
+├── src/                             # Core training modules
+│   ├── training/                    # Base model training
+│   └── ensemble/                    # Ensemble creation
+│
+├── scripts/                         # Utility scripts
+│   ├── verify_models.py             # Model verification
+│   └── check_models.py              # Quick model check
+│
+└── configs/                         # Configuration files
 ```
 
-## 🚀 Master Pipeline Script: Complete Automation
+## 🚀 Quick Start
 
-**NEW: Use the `pipeline.py` script to run the entire pipeline with a single command!**
-
-### One-Command Pipeline Execution
+### 1. Clone Repository
 
 ```bash
-# Run complete pipeline (Training → Ensemble → ONNX → TFLite → Validation)
-python pipeline.py
-```
-
-### Run Specific Stages
-
-```bash
-# Stage 1: Train base models (7 models)
-python pipeline.py --stage training --epochs 100 --data_path /path/to/data
-
-# Stage 2: Create ensemble models (4 models)
-python pipeline.py --stage ensemble
-
-# Stage 3: ONNX export (pre-converted, uses fallback)
-python pipeline.py --stage onnx
-
-# Stage 4: Convert to TFLite with quantization (11 models)
-python pipeline.py --stage conversion --verbose
-
-# Stage 5: Validate and test all models
-python pipeline.py --stage validation
-```
-
-### Custom Configuration
-
-```bash
-# Custom paths and hyperparameters
-python pipeline.py \
-    --data_path /path/to/training/data \
-    --checkpoint_dir ./my_checkpoints \
-    --output_dir ./my_tflite_models \
-    --epochs 150 \
-    --batch_size 64 \
-    --learning_rate 0.0001 \
-    --verbose
-```
-
-### Pipeline Options
-
-```bash
-python pipeline.py --help
-```
-
-**Common options:**
-- `--stage` - Run specific stage (training, ensemble, onnx, conversion, validation)
-- `--data_path` - Path to training dataset
-- `--checkpoint_dir` - Directory for model checkpoints
-- `--output_dir` - Directory for TFLite output
-- `--epochs` - Number of training epochs (default: 100)
-- `--batch_size` - Training batch size (default: 32)
-- `--learning_rate` - Learning rate (default: 0.001)
-- `--verbose` - Enable verbose output
-- `--continue_on_error` - Continue to next stage on errors
-
-## 🚀 Quick Start (TFLite Conversion Only)
-
-If you just want to convert pre-trained models to TFLite:
-
-### 1. Create Virtual Environment
-
-```bash
-python -m venv venv_tflite
-```
-
-**Activate (Windows):**
-```bash
-.\venv_tflite\Scripts\activate
-```
-
-**Activate (Linux/macOS):**
-```bash
-source venv_tflite/bin/activate
+git clone https://github.com/SERVER-246/Intelli_PEST-Backend.git
+cd Intelli_PEST-Backend
 ```
 
 ### 2. Install Dependencies
 
 ```bash
-pip install -r requirements_tflite.txt
+pip install torch torchvision onnx onnxruntime-gpu tensorflow
+pip install -r knowledge_distillation/requirements.txt
 ```
 
-### 3. Run TFLite Conversion Only
+### 3. Train Student Model (Knowledge Distillation)
 
-For quick TFLite conversion (pre-trained models):
 ```bash
-python run_conversion.py
+cd knowledge_distillation
+
+# Update dataset path in configs/config.yaml
+# Then run training:
+python train.py --config configs/config.yaml
 ```
 
-Or convert a single model:
-```bash
-python run_conversion.py --model mobilenet_v2
+### 4. Use Pre-trained Models
+
+**TFLite (Android):**
+```python
+import tensorflow as tf
+
+interpreter = tf.lite.Interpreter(
+    model_path="tflite_models_compatible/android_models/mobilenet_v2.tflite"
+)
+interpreter.allocate_tensors()
 ```
 
-**Or for complete pipeline from training:**
+**ONNX (Cross-platform):**
+```python
+import onnxruntime as ort
+
+session = ort.InferenceSession(
+    "tflite_models_compatible/onnx_models/mobilenet_v2.onnx"
+)
+```
+
+## 🎓 Knowledge Distillation
+
+Train a lightweight model using knowledge from all 11 teachers:
+
 ```bash
+cd knowledge_distillation
+python train.py --epochs 100 --batch_size 32
+```
+
+**What it does:**
+- Loads 11 teacher models (ONNX format)
+- Trains student with soft labels + hard labels
+- Exports to PyTorch, ONNX, TFLite
+- Generates evaluation metrics & plots
+
+**Output:**
+- `models/student/pytorch/student_model.pt`
+- `models/student/onnx/student_model.onnx`
+- `models/student/tflite/student_model.tflite`
+- `plots/confusion_matrix.png`
+- `metrics/classification_report.json`
+
+See [knowledge_distillation/README.md](knowledge_distillation/README.md) for details.
+
+## 📱 Class Labels
+
+### Teacher Models (11 Classes)
+```
+0: Healthy           5: Top borer
+1: Internode borer   6: Army worm
+2: Pink borer        7: Mealy bug
+3: Rat damage        8: Porcupine damage
+4: Stalk borer       9: Root borer
+                    10: Termite
+```
+
+### Student Model (12 Classes)
+```
+0: Fall army worm    6: Top borer
+1: Healthy           7: Army worm
+2: Internode borer   8: Mealy bug
+3: Pink borer        9: Porcupine damage
+4: Rat damage       10: Root borer
+5: Stalk borer      11: Termite
+```
+
+## 🔧 Pipeline Commands
+
+### Full Training Pipeline
+
+```bash
+# 1. Train base models (optional - pre-trained available)
+python pipeline.py --stage training --data_path /path/to/data
+
+# 2. Create ensemble models (optional - pre-trained available)
+python pipeline.py --stage ensemble
+
+# 3. Convert to TFLite
 python pipeline.py --stage conversion
+
+# 4. Validate all models
+python pipeline.py --stage validation
 ```
 
-## 📋 Complete Project Structure
-
-```
-Intelli_PEST-Backend/
-│
-├── 📄 pipeline.py                        # MASTER SCRIPT (NEW!)
-│                                         # Complete automation: training → TFLite
-├── 📄 COMPLETE_PIPELINE.md               # Full pipeline documentation
-├── 📄 run_conversion.py                  # TFLite conversion script
-├── 📄 requirements_tflite.txt            # All 60 dependencies (frozen)
-├── 📄 setup.py                           # Package configuration
-│
-├── src/
-│   ├── training/                         # MODEL TRAINING STAGE
-│   │   ├── base_training.py              # Train 7 individual models
-│   │   ├── ensemble_training.py          # Create 4 ensemble models
-│   │   ├── base_training.py              # Train 7 individual models
-│   │   ├── ensemble_training.py          # Create 4 ensemble models
-│   │   └── __init__.py
-│   │
-│   ├── conversion/                       # TFLITE CONVERSION STAGE
-│   │   ├── pytorch_to_tflite_quantized.py    # Core conversion engine
-│   │   └── __init__.py
-│   │
-│   ├── deployment/                       # Deployment utilities
-│   │   └── __init__.py
-│   │
-│   └── utils/                            # Shared utilities
-│
-├── configs/                              # Configuration files
-│   ├── training_config.yaml              # Training hyperparameters
-│   ├── model_config.yaml                 # Model architectures
-│   └── conversion_config.yaml            # Conversion settings
-│
-├── docs/                                 # Documentation
-│   ├── INSTALLATION.md                   # Environment setup
-│   └── TRAINING_GUIDE.md                 # Training instructions
-│
-├── scripts/                              # Utility scripts
-│   └── check_models.py                   # Model verification
-│
-├── tests/                                # Test suite
-│   ├── test_training.py                  # Training validation
-│   ├── test_conversion.py                # Conversion tests
-│   └── test_inference.py                 # Inference tests
-│
-└── tflite_models/                        # FINAL OUTPUT (Phase 5)
-    ├── mobilenet_v2/
-    │   ├── mobilenet_v2.tflite           # Optimized model
-    │   ├── conversion_result.json        # Metadata
-    │   └── android_metadata.json         # Android config
-    ├── darknet53/
-    ├── resnet50/
-    ├── inception_v3/
-    ├── efficientnet_b0/
-    ├── yolo11n-cls/
-    ├── alexnet/
-    ├── ensemble_attention/
-    ├── ensemble_concat/
-    ├── ensemble_cross/
-    └── super_ensemble/
-```
-
-## 🔄 Complete Pipeline Stages
-
-### Use Master `pipeline.py` Script for Full Automation
+### Knowledge Distillation Only
 
 ```bash
-# Run entire pipeline
-python pipeline.py
-
-# Run specific stage
-python pipeline.py --stage training|ensemble|onnx|conversion|validation
-
-# With custom parameters
-python pipeline.py --epochs 100 --batch_size 32 --data_path /path/to/data --verbose
+cd knowledge_distillation
+python train.py --config configs/config.yaml --epochs 100
 ```
 
-### Stage Details
-
-| Stage | Script | Command | Output |
-|-------|--------|---------|--------|
-| 1. Training (7 models) | `base_training.py` | `python pipeline.py --stage training` | PyTorch .pt files |
-| 2. Ensemble (4 models) | `ensemble_training.py` | `python pipeline.py --stage ensemble` | Ensemble .pt files |
-| 3. ONNX Export | Pre-converted | `python pipeline.py --stage onnx` | ONNX ready |
-| 4. TFLite Conversion | `run_conversion.py` | `python pipeline.py --stage conversion` | 11 .tflite files |
-| 5. Validation | Tests | `python pipeline.py --stage validation` | Test report |
-
-### Alternative: Run Stages Directly
-
-```bash
-# Stage 1: Train base models (1-2 hours on GPU)
-python -m src.training.base_training --data_path "path/to/data" --epochs 100
-
-# Stage 2: Create ensemble models (30 minutes)
-python -m src.training.ensemble_training --checkpoint_dir "./checkpoints"
-
-# Stage 4: Convert to TFLite (15-30 minutes)
-python run_conversion.py
-
-# Stage 5: Validate
-python -m pytest tests/ -v
-```
-
-## 🚀 Quick Start Guide
-
-### For Users With Pre-Trained Models (TFLite Conversion Only)
-
-```bash
-# Step 1: Clone repository
-git clone https://github.com/SERVER-246/Intelli_PEST-Backend
-cd Intelli_PEST-Backend
-
-# Step 2: Create environment
-python -m venv venv_tflite
-.\venv_tflite\Scripts\activate  # Windows
-# OR
-source venv_tflite/bin/activate  # Linux/Mac
-
-# Step 3: Install dependencies
-pip install -r requirements_tflite.txt
-
-# Step 4: Run TFLite conversion
-python run_conversion.py
-
-# Step 5: Check outputs
-ls tflite_models/  # All 11 .tflite files
-```
-
-### For Researchers (Complete Pipeline from Training)
-
-```bash
-# Follow installation in docs/INSTALLATION.md
-# Run training in docs/TRAINING_GUIDE.md
-# Then follow TFLite conversion above
-```
+## 📋 Requirements
 
 ```
-PyTorch Model (.pt)
-        ↓
-   Step 1: Load Model
-        ↓
-   Step 2: Export to ONNX (opset 11-17)
-        ↓
-   Step 3: Convert to TensorFlow SavedModel
-        ↓
-   Step 4: Convert to TFLite (Dynamic Range Quantization)
-        ↓
-   Step 5: Verify Output
-        ↓
-TFLite Model (.tflite) - Ready for Mobile Deployment
+torch>=2.0.0
+torchvision>=0.15.0
+tensorflow>=2.14.0
+onnx>=1.14.0
+onnxruntime-gpu>=1.15.0
+numpy>=1.24.0
+Pillow>=9.0.0
+PyYAML>=6.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+scikit-learn>=1.3.0
+tqdm>=4.65.0
 ```
 
-### Quantization Strategy
+## 📈 Performance
 
-- **Type**: Dynamic Range Quantization
-- **Benefits**: 
-  - ~76.6% average model size reduction
-  - Minimal accuracy loss
-  - CPU-optimized inference
-  - No calibration dataset required
-- **Output**: Full precision weights, quantized activations
+| Model | Size | Accuracy* | Inference |
+|-------|------|-----------|-----------|
+| Super-Ensemble | 138 MB | ~95% | ~200ms |
+| EfficientNet-B0 | 5 MB | ~88% | ~30ms |
+| Student (KD) | ~5 MB | ~85%+ | ~25ms |
 
-## 💻 Advanced Usage
+*Accuracy varies by dataset and training configuration
 
-### Custom Input/Output Directories
+## 🤝 Contributing
 
-```bash
-python run_conversion.py \
-    --input_dir D:\deployment_models \
-    --output_dir ./tflite_output
-```
-
-### Verbose Output
-
-```bash
-python run_conversion.py --verbose
-```
-
-### View Conversion Results
-
-```bash
-cat tflite_models/quantized_conversion_report.json
-```
-
-## 📦 Output Files
-
-Each model directory contains:
-- `{model_name}.tflite` - The optimized TFLite model
-- `conversion_result.json` - Conversion metadata
-- `android_metadata.json` - Android integration info
-
-## 🔐 System Requirements
-
-| Requirement | Minimum | Recommended |
-|-------------|---------|-------------|
-| Python | 3.10 | 3.10+ |
-| RAM | 8 GB | 16 GB |
-| Disk | 5 GB | 10 GB |
-| OS | Windows 10 | Windows 10+, macOS 10.14+, Ubuntu 18.04+ |
-
-## 📚 Dependencies
-
-### Core Frameworks
-- **PyTorch**: 2.3.1 (for model loading)
-- **TensorFlow**: 2.20.0 (for conversion)
-- **ONNX**: 1.16.0 (intermediate format)
-
-### Conversion Tools
-- **onnx2tf**: 1.25.15 (ONNX → TensorFlow)
-- **onnx-graphsurgeon**: For graph optimization
-- **onnxsim**: ONNX simplification
-
-### Scientific Computing
-- **NumPy**: 1.26.4 (array operations)
-- **SciPy**: For numerical computation
-
-See `requirements_tflite.txt` for complete dependency list with exact versions.
-
-## 🎓 How It Works
-
-1. **Model Loading**: Loads PyTorch JIT-compiled models
-2. **ONNX Export**: Exports to ONNX format with fallback to pre-converted files
-3. **TensorFlow Conversion**: Converts ONNX to TensorFlow SavedModel
-4. **TFLite Conversion**: Applies Dynamic Range Quantization
-5. **Verification**: Validates output shape and inference capability
-6. **Reporting**: Generates detailed conversion statistics
-
-## ⚠️ Known Issues & Solutions
-
-### Issue 1: Memory Errors for Large Models
-**Cause**: Insufficient RAM during conversion
-**Solution**: Increase RAM or convert on cloud instance
-
-### Issue 2: AdaptiveAvgPool2d ONNX Export
-**Cause**: Some PyTorch models use adaptive pooling incompatible with ONNX
-**Solution**: Script uses pre-converted ONNX files as fallback
-
-### Issue 3: Network Timeouts
-**Cause**: onnx2tf tries to download test data
-**Solution**: Script patches this function to use dummy data
-
-## 📊 Performance Metrics
-
-### Conversion Time
-- Small models (< 50MB): ~30-60 seconds
-- Large models (> 500MB): 2-5 minutes
-- Total for 11 models: ~7-10 minutes
-
-### Inference Performance
-- TFLite: 50-100ms per inference (CPU, mobile)
-- TFLite: 10-20ms per inference (with GPU delegate)
-
-## 🔗 Integration
-
-### Android Integration
-```kotlin
-val interpreter = Interpreter(tfliteModelFile)
-val inputArray = FloatArray(256 * 256 * 3)
-val outputArray = FloatArray(11) // 11 pest classes
-interpreter.run(arrayOf(inputArray), arrayOf(outputArray))
-```
-
-### Web Deployment
-```javascript
-import * as tf from '@tensorflow/tfjs';
-import * as tflite from '@tensorflow/tfjs-tflite';
-
-const model = await tflite.loadTFLiteModel('file://model.tflite');
-```
-
-## 📝 Citation
-
-If you use this pipeline in your research, please cite:
-
-```bibtex
-@software{intellipest_backend,
-  author = Sugam Singh,
-  title = {Intelli_PEST-Backend: PyTorch to TFLite Conversion Pipeline},
-  year = {2025},
-  url = {https://github.com/SERVER-246/Intelli_PEST-Backend}
-}
-```
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/improvement`)
+3. Commit changes (`git commit -am 'Add improvement'`)
+4. Push to branch (`git push origin feature/improvement`)
+5. Create Pull Request
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file.
 
-## 🤝 Support
+## 👥 Authors
 
-For issues, questions, or suggestions:
-- Open an [Issue](https://github.com/SERVER-246/Intelli_PEST-Backend/issues)
-- Email: singh.sugam.47@gmail.com
+- **Intelli-PEST Team** - [SERVER-246](https://github.com/SERVER-246)
 
 ---
 
-**Last Updated**: December 15, 2025  
-**Status**: ✅ Production Ready  
-**Python**: 3.10+  
-**PyTorch**: 2.3.1 | **TensorFlow**: 2.20.0 | **ONNX**: 1.16.0
+**⭐ Star this repo if you find it useful!**

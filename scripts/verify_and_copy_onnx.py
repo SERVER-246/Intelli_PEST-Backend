@@ -54,7 +54,7 @@ def verify_onnx_model(model_path: Path) -> dict:
     """Verify an ONNX model."""
     try:
         import onnx
-        import onnxruntime as ort
+        import onnxruntime as ort  # type: ignore[import-unresolved]
         
         # Load and check model
         model = onnx.load(str(model_path))

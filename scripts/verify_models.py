@@ -44,7 +44,7 @@ ONNX_DIR = Path(r"D:\Base-dir\onnx_models")
 def verify_tflite_model(model_path: Path) -> dict:
     """Verify a TFLite model."""
     try:
-        import tensorflow as tf
+        import tensorflow as tf  # type: ignore[import-unresolved]
         
         interpreter = tf.lite.Interpreter(model_path=str(model_path))
         interpreter.allocate_tensors()
@@ -88,7 +88,7 @@ def verify_onnx_model(model_path: Path) -> dict:
     """Verify an ONNX model."""
     try:
         import onnx
-        import onnxruntime as ort
+        import onnxruntime as ort  # type: ignore[import-unresolved]
         
         # Load and check model
         model = onnx.load(str(model_path))
