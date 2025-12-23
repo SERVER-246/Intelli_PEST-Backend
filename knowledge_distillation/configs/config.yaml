@@ -10,34 +10,35 @@
 dataset:
   # UPDATE THIS PATH to your dataset location
   path: "G:/AI work/IMAGE DATASET"
-  num_classes: 12
+  num_classes: 11  # Corrected: 11 classes
   image_size: 256
   train_split: 0.8
   val_split: 0.2
   batch_size: 32
   num_workers: 4
   
-  # Class names (alphabetical order as loaded by ImageFolder)
+  # Class names (case-sensitive alphabetical order as loaded by ImageFolder)
+  # Lowercase comes AFTER uppercase in ASCII sort
+  # NOTE: These must match the EXACT folder names in the dataset
   class_names:
-    - "Fall army worm"
-    - "Healthy"
-    - "Internode borer"
-    - "Pink borer"
-    - "Rat damage"
-    - "Stalk borer"
-    - "Top borer"
-    - "army worm"
-    - "mealy bug"
-    - "porcupine   damage"
-    - "root borer"
-    - "termite"
+    - "Healthy"            # [0] - uppercase H
+    - "Internode borer"    # [1] - uppercase I
+    - "Pink borer"         # [2] - uppercase P
+    - "Rat damage"         # [3] - uppercase R
+    - "Stalk borer"        # [4] - uppercase S
+    - "Top borer"          # [5] - uppercase T
+    - "army worm"          # [6] - lowercase a
+    - "mealy bug"          # [7] - lowercase m
+    - "porcupine damage"   # [8] - lowercase p (single space)
+    - "root borer"         # [9] - lowercase r
+    - "termite"            # [10] - lowercase t
 
 # ============================================================
 # Teacher Models Configuration (11 ONNX models)
 # ============================================================
 teachers:
   # Path relative to repo root, or absolute path
-  models_dir: "../tflite_models_compatible/onnx_models"
+  models_dir: "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
   teacher_num_classes: 11
   models:
     - name: "mobilenet_v2"
@@ -80,7 +81,7 @@ teachers:
 student:
   architecture: "CustomCNN"
   target_size_mb: 15
-  num_classes: 12
+  num_classes: 11  # Matches teacher models
   input_channels: 3
   input_size: 256
   channels: [32, 64, 128, 256, 512]
@@ -94,10 +95,10 @@ student:
 # Knowledge Distillation Configuration
 # ============================================================
 distillation:
-  temperature: 4.0
-  alpha: 0.7  # Weight for soft label loss
-  beta: 0.3   # Weight for hard label loss
-  use_feature_distillation: true
+  temperature: 3.0  # Lower temperature for sharper distributions
+  alpha: 0.3  # Reduced - less reliance on teachers (11 vs 12 class mismatch)
+  beta: 0.7   # Increased - more weight on actual labels
+  use_feature_distillation: false  # Disable for now - focus on logits
   feature_loss_weight: 0.1
   use_attention_transfer: false
   attention_loss_weight: 0.05
@@ -107,11 +108,11 @@ distillation:
 # ============================================================
 training:
   epochs: 100
-  learning_rate: 0.001
+  learning_rate: 0.005  # Increased from 0.001
   weight_decay: 0.0001
   optimizer: "adamw"
   scheduler: "cosine"
-  warmup_epochs: 5
+  warmup_epochs: 3  # Reduced warmup
   early_stopping:
     enabled: true
     patience: 15

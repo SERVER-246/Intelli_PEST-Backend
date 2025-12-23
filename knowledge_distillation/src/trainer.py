@@ -529,7 +529,7 @@ class KnowledgeDistillationTrainer:
             
             # Forward pass
             if self.use_amp:
-                with autocast():
+                with autocast('cuda'):
                     logits = self.student(images)
                     _, loss_components = self.criterion(logits, soft_labels, labels)
             else:
