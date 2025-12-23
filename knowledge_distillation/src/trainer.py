@@ -76,8 +76,9 @@ class TeacherEnsemble:
         if not ONNX_AVAILABLE:
             raise RuntimeError("onnxruntime is required for teacher ensemble")
         
-        # Set up ONNX runtime providers
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.device == "cuda" else ['CPUExecutionProvider']
+        # Use CPU for ONNX inference (more reliable, GPU used for student training)
+        # This avoids CUDA/cuDNN version compatibility issues with onnxruntime-gpu
+        providers = ['CPUExecutionProvider']
         
         for config in model_configs:
             name = config['name']
