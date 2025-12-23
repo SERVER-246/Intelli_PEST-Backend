@@ -31,7 +31,7 @@ import json
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.dataset import create_data_loaders
+from src.dataset import create_dataloaders
 from src.enhanced_student_model import create_enhanced_student
 from src.teacher_loader import MultiFormatTeacherEnsemble
 from src.sequential_trainer import SequentialDistillationTrainer
@@ -122,18 +122,27 @@ def main():
     logger.info("="*70)
     
     dataset_config = config['dataset']
-    train_loader, val_loader, class_names = create_data_loaders(
+    train_loader, val_loader, dataset_info = create_dataloaders(
         data_dir=dataset_config['path'],
         image_size=dataset_config['image_size'],
         batch_size=dataset_config['batch_size'],
-        train_split=dataset_config['train_split'],
+        train_ratio=dataset_config['train_split'],
         num_workers=dataset_config['num_workers']
     )
     
+    # Extract class information
+    class_names = dataset_info['class_names']
+    num_classes = dataset_info['num_classes']
+    
     # Save class mapping
-    class_mapping = {i: name for i, name in enumerate(class_names)}
+    class_mapping = dataset_info['class_to_idx']
     with open(dirs['checkpoints'] / 'class_mapping.json', 'w') as f:
         json.dump(class_mapping, f, indent=2)
+    
+    logger.info(f"Number of classes: {num_classes}")
+    logger.info(f"Classes: {class_names}")
+    logger.info(f"Training samples: {dataset_info['train_samples']}")
+    logger.info(f"Validation samples: {dataset_info['val_samples']}")
     
     # ============================================================
     # Create Student Model
