@@ -350,6 +350,45 @@ distillation:
 3. **Use fewer workers** on Windows: `num_workers: 4` or lower
 4. **Mixed precision**: Enable for 2x faster training (if supported)
 
+## 🏆 Achieved Results (December 2024)
+
+### Final Performance
+| Metric | Value |
+|--------|-------|
+| **Overall Accuracy** | **96.25%** |
+| Training Time | ~22 hours |
+| Total Epochs | 250 |
+| Model Size (PyTorch) | 46.85 MB |
+| Model Size (ONNX) | 46.50 MB |
+
+### Per-Class Accuracy
+| Class | Accuracy | Class | Accuracy |
+|-------|----------|-------|----------|
+| Healthy | 99.28% | army worm | **100.00%** |
+| Internode borer | 94.00% | mealy bug | 95.52% |
+| Pink borer | 92.05% | porcupine damage | **100.00%** |
+| Rat damage | **100.00%** | root borer | 95.65% |
+| Stalk borer | 95.24% | termite | 88.89% |
+| Top borer | 98.54% | | |
+
+### Training Progression
+| Phase | Teacher | Best Accuracy |
+|-------|---------|---------------|
+| 1 | AlexNet | 79.30% |
+| 2 | MobileNetV2 | 86.42% |
+| 3 | EfficientNet-B0 | 88.23% |
+| 4 | ResNet50 | 90.43% |
+| 5 | DarkNet53 | 91.33% |
+| 6 | InceptionV3 | 92.11% |
+| 7 | YOLO11n-cls | 93.79% |
+| 8 | Ensemble_Attention | 94.83% |
+| 9 | Ensemble_Concat | 93.79% |
+| 10 | Ensemble_Cross | 50.19%* |
+| 11 | Super_Ensemble | 92.24% |
+| **Final** | **Refinement** | **96.25%** |
+
+*Note: Ensemble_Cross phase showed lower accuracy due to conflicting knowledge, but EWC preserved prior learning.
+
 ## 📝 License
 
 MIT License
@@ -359,6 +398,12 @@ MIT License
 Knowledge Distillation Pipeline - December 2024
 
 ## 🔄 Changelog
+
+### v2.1.0 (December 2024)
+- **ACHIEVED**: 96.25% validation accuracy
+- **ADDED**: finish_training.py for final evaluation and export
+- **FIXED**: Model output dict handling (logits extraction)
+- **FIXED**: Windows multiprocessing compatibility
 
 ### v2.0.0 (December 2024)
 - **NEW**: Sequential training from all 11 teachers

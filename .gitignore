@@ -27,6 +27,7 @@ venv/
 ENV/
 env/
 .venv/
+venv_tflite/
 
 # IDE
 .vscode/
@@ -34,74 +35,81 @@ env/
 *.swp
 *.swo
 *~
-.DS_Store
 
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
-# Data and Models (Large files - use Git LFS or download separately)
-# Note: Model files should be downloaded from releases or trained locally
-data/
-outputs/
-checkpoints/*.pt
-checkpoints/*.pth
+# ============================================
+# Model Files (Large - train locally or download from releases)
+# ============================================
 
-# Keep model metadata but ignore actual models
+# PyTorch model files
+*.pt
 *.pth
-!model_metadata.json
 !*_metadata.json
+!model_metadata.json
 
-# Large model files (download from releases or train locally)
-tflite_models_compatible/android_models/*.tflite
+# ONNX model files
 tflite_models_compatible/onnx_models/*.onnx
-knowledge_distillation/models/**/*.pt
-knowledge_distillation/models/**/*.onnx
-knowledge_distillation/models/**/*.tflite
+
+# TFLite model files
+tflite_models_compatible/android_models/*.tflite
+
+# Knowledge Distillation outputs (generated during training)
 knowledge_distillation/checkpoints/
+knowledge_distillation/exported_models/
 knowledge_distillation/logs/
 knowledge_distillation/metrics/
-knowledge_distillation/plots/
+knowledge_distillation/models/
+
+# Other model formats
 *.h5
 *.pkl
 *.joblib
 
+# ============================================
+# Data and Outputs
+# ============================================
+data/
+outputs/
+results/
+deployment_models/
+plots_metrics/
+metrics_output/
+kfold_results/
+
+# ============================================
 # Logs
+# ============================================
 *.log
 logs/
 training.log
+training_output.log
 *.txt~
 
+# ============================================
 # Temporary files
+# ============================================
 *.tmp
 *.temp
 .cache/
 tmp/
 
-# OS
+# ============================================
+# OS-specific
+# ============================================
 .DS_Store
 Thumbs.db
 desktop.ini
+.AppleDouble
+.LSOverride
 
-# Project-specific
-deployment_models/
-plots_metrics/
-metrics_output/
-kfold_results/
-results/
-
-# Large directories to exclude
+# ============================================
+# Archives
+# ============================================
 *.7z
 *.zip
 *.rar
 *.tar
 *.tar.gz
-
-# MacOS
-.AppleDouble
-.LSOverride
-
-# Linux
-.~
-
-venv_tflite/
