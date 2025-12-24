@@ -358,4 +358,4 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ---
 
-*Last Updated: December 2024 | Pipeline Version: 2.0.0*
+*Last Updated: December 2025 | Pipeline Version: 1.0.0*
