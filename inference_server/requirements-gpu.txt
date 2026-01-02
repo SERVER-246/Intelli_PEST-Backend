@@ -1,0 +1,14 @@
+# GPU Requirements (Additional)
+# =============================
+# Install these on top of requirements.txt for GPU support
+
+# PyTorch with CUDA 11.8
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch>=2.0.0
+torchvision>=0.15.0
+
+# ONNX Runtime with GPU
+onnxruntime-gpu>=1.15.0
+
+# TensorFlow with GPU (install tensorflow-gpu or use standard tensorflow with CUDA)
+# tensorflow>=2.13.0 (standard TF now includes GPU support with CUDA toolkit)

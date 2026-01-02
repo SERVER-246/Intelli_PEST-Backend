@@ -1,0 +1,45 @@
+# Inference Server Requirements
+# =============================
+# Core dependencies for running the sugarcane pest detection inference server
+
+# Web Frameworks
+flask>=2.3.0
+flask-cors>=4.0.0
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+starlette>=0.27.0
+
+# ML/DL Frameworks (CPU)
+torch>=2.0.0
+torchvision>=0.15.0
+onnxruntime>=1.15.0
+tensorflow>=2.13.0
+
+# Image Processing
+Pillow>=10.0.0
+opencv-python-headless>=4.8.0
+
+# Data Processing
+numpy>=1.24.0
+
+# Configuration & Validation
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+PyYAML>=6.0
+
+# Security
+python-multipart>=0.0.6
+
+# HTTP Client (for testing)
+requests>=2.31.0
+httpx>=0.24.0
+
+# Ngrok Integration
+pyngrok>=6.0.0
+
+# Logging
+colorlog>=6.7.0
+
+# Utilities
+typing-extensions>=4.7.0

@@ -1,0 +1,140 @@
+# Docker Compose for Sugarcane Pest Detection Inference Server
+# ============================================================
+# 
+# Usage:
+#   Start Flask server:      docker-compose up flask-server
+#   Start FastAPI server:    docker-compose up fastapi-server
+#   Start with ngrok:        docker-compose --profile ngrok up
+#   Start GPU version:       docker-compose --profile gpu up
+#
+# Environment variables (create .env file):
+#   MODEL_PATH=/app/models/student_model.pth
+#   MODEL_FORMAT=pytorch
+#   NGROK_AUTHTOKEN=your_ngrok_token
+#   API_KEY=your_default_api_key
+# ============================================================
+
+version: '3.8'
+
+services:
+  # Flask Server (CPU)
+  flask-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.flask
+    container_name: pest-detection-flask
+    ports:
+      - "5000:5000"
+    environment:
+      - MODEL_PATH=${MODEL_PATH:-/app/models/student_model.pth}
+      - MODEL_FORMAT=${MODEL_FORMAT:-pytorch}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    volumes:
+      - ../models:/app/models:ro
+      - flask-logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - pest-detection-net
+
+  # FastAPI Server (CPU)
+  fastapi-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.fastapi
+    container_name: pest-detection-fastapi
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PATH=${MODEL_PATH:-/app/models/student_model.pth}
+      - MODEL_FORMAT=${MODEL_FORMAT:-pytorch}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    volumes:
+      - ../models:/app/models:ro
+      - fastapi-logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - pest-detection-net
+
+  # FastAPI Server (GPU)
+  fastapi-gpu:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+    container_name: pest-detection-gpu
+    profiles:
+      - gpu
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PATH=${MODEL_PATH:-/app/models/student_model.pth}
+      - MODEL_FORMAT=${MODEL_FORMAT:-pytorch}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - ../models:/app/models:ro
+      - gpu-logs:/app/logs
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - pest-detection-net
+
+  # Ngrok Tunnel
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: pest-detection-ngrok
+    profiles:
+      - ngrok
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: http fastapi-server:8000 --log stdout
+    ports:
+      - "4040:4040"
+    depends_on:
+      - fastapi-server
+    networks:
+      - pest-detection-net
+
+  # Redis (for rate limiting persistence)
+  redis:
+    image: redis:7-alpine
+    container_name: pest-detection-redis
+    profiles:
+      - production
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - pest-detection-net
+
+networks:
+  pest-detection-net:
+    driver: bridge
+
+volumes:
+  flask-logs:
+  fastapi-logs:
+  gpu-logs:
+  redis-data:

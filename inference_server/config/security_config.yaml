@@ -1,0 +1,175 @@
+# Security Configuration
+# ======================
+# Production security settings for the inference server.
+
+# API Authentication
+authentication:
+  enabled: true
+  header_name: "X-API-Key"
+  key_min_length: 32
+  key_algorithm: "sha256"
+  
+  # API key tiers
+  tiers:
+    free:
+      rate_limit: 50
+      rate_window: 60
+      batch_limit: 5
+      features: [predict]
+      
+    standard:
+      rate_limit: 200
+      rate_window: 60
+      batch_limit: 10
+      features: [predict, batch, status]
+      
+    premium:
+      rate_limit: 1000
+      rate_window: 60
+      batch_limit: 20
+      features: [predict, batch, status, models]
+      
+    admin:
+      rate_limit: -1  # unlimited
+      rate_window: 60
+      batch_limit: 50
+      features: [all]
+
+# Rate Limiting
+rate_limiting:
+  enabled: true
+  algorithm: "sliding_window"
+  default_requests: 100
+  default_window: 60
+  burst_allowance: 20
+  
+  # Per-endpoint limits
+  endpoints:
+    "/api/v1/predict":
+      requests: 60
+      window: 60
+    "/api/v1/predict/batch":
+      requests: 20
+      window: 60
+    "/api/v1/health":
+      requests: 300
+      window: 60
+
+# CORS Configuration
+cors:
+  enabled: true
+  allow_origins:
+    - "*"  # Restrict to specific origins in production
+  allow_methods:
+    - "GET"
+    - "POST"
+    - "OPTIONS"
+  allow_headers:
+    - "Content-Type"
+    - "X-API-Key"
+    - "X-Request-ID"
+  allow_credentials: false
+  max_age: 600
+
+# Security Headers
+headers:
+  enabled: true
+  values:
+    X-Content-Type-Options: "nosniff"
+    X-Frame-Options: "DENY"
+    X-XSS-Protection: "1; mode=block"
+    Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+    Content-Security-Policy: "default-src 'self'"
+    Referrer-Policy: "strict-origin-when-cross-origin"
+    Permissions-Policy: "geolocation=(), microphone=(), camera=()"
+
+# Request Validation
+request_validation:
+  max_content_length: 10485760  # 10 MB
+  allowed_content_types:
+    - "multipart/form-data"
+    - "application/json"
+  request_timeout: 30
+  
+  # File upload restrictions
+  file_upload:
+    max_files: 10
+    max_file_size: 10485760
+    allowed_extensions:
+      - ".jpg"
+      - ".jpeg"
+      - ".png"
+      - ".webp"
+    scan_for_malware: true
+
+# Input Sanitization
+sanitization:
+  enabled: true
+  
+  # Filename sanitization
+  filename:
+    max_length: 255
+    allowed_chars: "a-zA-Z0-9._-"
+    remove_path_traversal: true
+    
+  # Path sanitization
+  path:
+    block_traversal: true
+    block_null_bytes: true
+    
+  # JSON sanitization
+  json:
+    max_depth: 10
+    max_string_length: 10000
+
+# Audit Logging
+audit:
+  enabled: true
+  
+  # What to log
+  log_requests: true
+  log_responses: true
+  log_errors: true
+  log_security_events: true
+  
+  # Sensitive fields to mask
+  sensitive_fields:
+    - "api_key"
+    - "password"
+    - "token"
+    - "secret"
+    - "authorization"
+    
+  # Retention
+  retention_days: 90
+  
+  # Alert thresholds
+  alerts:
+    failed_auth_threshold: 10
+    rate_limit_threshold: 100
+    error_rate_threshold: 0.1
+
+# IP Restrictions (optional)
+ip_restrictions:
+  enabled: false
+  whitelist: []
+  blacklist: []
+  
+# DDoS Protection
+ddos_protection:
+  enabled: true
+  
+  # Connection limits
+  max_connections_per_ip: 100
+  connection_timeout: 30
+  
+  # Request patterns
+  suspicious_patterns:
+    - rapid_requests: 50  # requests in 10 seconds
+    - large_payloads: 5   # large requests in sequence
+
+# Error Handling
+error_handling:
+  expose_stack_traces: false  # Never in production
+  generic_error_message: "An error occurred processing your request"
+  log_full_errors: true

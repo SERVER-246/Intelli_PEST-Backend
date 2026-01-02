@@ -1,0 +1,131 @@
+# Model Configuration
+# ===================
+# Configuration for all available models in the inference server.
+
+# Model formats supported
+formats:
+  - pytorch  # .pt, .pth
+  - onnx     # .onnx
+  - tflite   # .tflite
+
+# Image preprocessing configuration
+preprocessing:
+  image_size: 224
+  mean: [0.485, 0.456, 0.406]  # ImageNet normalization
+  std: [0.229, 0.224, 0.225]
+  interpolation: "bilinear"
+
+# Class labels for pest detection
+classes:
+  count: 11
+  names:
+    0: "Healthy"
+    1: "army worm"
+    2: "Internode borer"
+    3: "mealy bug"
+    4: "Pink borer"
+    5: "porcupine damage"
+    6: "Rat damage"
+    7: "root borer"
+    8: "Stalk borer"
+    9: "termite"
+    10: "Top borer"
+
+# Student Model (Public API)
+student_model:
+  name: "Enhanced Student Model"
+  description: "Knowledge distilled model trained from 11 teacher models"
+  version: "1.0.0"
+  accuracy: 0.9625
+  parameters: 12200000
+  exposed: true  # Available via public API
+  formats:
+    pytorch:
+      filename: "student_model_final.pth"
+      size_mb: 46.85
+    onnx:
+      filename: "student_model.onnx"
+      size_mb: 46.50
+    tflite:
+      filename: "student_model.tflite"
+      size_mb: 47.0
+
+# Teacher Models (Internal Only - NOT exposed to public API)
+teacher_models:
+  # Base Models
+  alexnet:
+    name: "AlexNet"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  mobilenetv2:
+    name: "MobileNetV2"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  efficientnet:
+    name: "EfficientNetB0"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  resnet50:
+    name: "ResNet50"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  darknet53:
+    name: "DarkNet53"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  inceptionv3:
+    name: "InceptionV3"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  yolo11n_cls:
+    name: "YOLO11n-cls"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  # Ensemble Models
+  ensemble_attention:
+    name: "Ensemble Attention"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  ensemble_concat:
+    name: "Ensemble Concat"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  ensemble_cross:
+    name: "Ensemble Cross"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+    
+  super_ensemble:
+    name: "Super Ensemble"
+    exposed: false
+    formats: [pytorch, onnx, tflite]
+
+# Inference settings per model type
+inference:
+  pytorch:
+    device: "auto"  # auto, cpu, cuda
+    precision: "fp32"  # fp32, fp16
+    
+  onnx:
+    providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    graph_optimization_level: "all"
+    
+  tflite:
+    num_threads: 4
+    use_xnnpack: true
+
+# Performance benchmarks (reference)
+benchmarks:
+  student_model:
+    cpu_inference_ms: 150
+    gpu_inference_ms: 25
+    memory_mb: 200
