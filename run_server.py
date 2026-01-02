@@ -100,6 +100,7 @@ if __name__ == "__main__":
     
     print("Starting server on http://0.0.0.0:8000")
     print("API Documentation: http://localhost:8000/docs")
+    print("Concurrent connections: 100+ (async support enabled)")
     print("=" * 60)
     
     uvicorn.run(
@@ -107,4 +108,8 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         log_level="info",
+        limit_concurrency=100,  # Support up to 100 concurrent connections
+        backlog=2048,  # Connection queue size
+        timeout_keep_alive=60,  # Keep connections alive for 60s
+        loop="asyncio",  # Use asyncio for better concurrency
     )
