@@ -79,6 +79,7 @@ def create_app(
         from ..filters import ValidationPipeline
         from ..filters.file_validator import FileValidator
         from ..filters.image_validator import ImageValidator
+        from ..filters.content_filter import ContentFilter
         
         # Create more permissive validators for agricultural images
         # - Allow larger files (DSC camera images can be 15MB+)
@@ -96,15 +97,26 @@ def create_app(
             max_aspect_ratio=10.0,
         )
         
-        # Disable content filter - too aggressive for pest damage images
-        # which may not have typical vegetation color profiles
+        # Configure content filter with relaxed settings but human detection
+        # - Lower vegetation threshold (pest damage images may not be very green)
+        # - Keep face/skin detection to reject obviously wrong images
+        content_filter = ContentFilter(
+            relevance_threshold=0.25,         # Lower threshold for relevance
+            min_vegetation_ratio=0.05,        # Very permissive (pest damage may be brown)
+            min_natural_score=0.20,           # Allow more types of natural images
+        )
+        
         validation_pipeline = ValidationPipeline(
             file_validator=file_validator,
             image_validator=image_validator,
-            skip_content_filter=True,
+            content_filter=content_filter,
+            skip_content_filter=False,        # Enable content filter to reject non-plant images
         )
         set_validation_pipeline(validation_pipeline)
-        logger.info("Image validation pipeline loaded (relaxed settings for agricultural images)")
+        logger.info("Image validation pipeline loaded (with human detection filter enabled)")
+        
+    except Exception as e:
+        logger.warning(f"Validation pipeline not available: {e}")
         
     except Exception as e:
         logger.warning(f"Validation pipeline not available: {e}")

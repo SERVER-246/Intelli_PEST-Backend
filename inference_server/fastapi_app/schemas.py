@@ -133,6 +133,10 @@ class ClassesResponse(BaseResponse):
     """Classes list response."""
     num_classes: int = Field(..., description="Number of classes")
     classes: List[ClassInfo]
+    special_categories: Optional[List[str]] = Field(
+        None, 
+        description="Special feedback categories like 'junk', 'unrelated' for non-pest images"
+    )
 
 
 # Models Info
@@ -197,3 +201,5 @@ class FeedbackStatsResponse(BaseResponse):
     accuracy_from_feedback: Optional[float]
     pending_feedbacks: int
     corrections_by_class: Dict[str, int]
+    junk_reports: Optional[int] = Field(0, description="Number of images reported as junk/unrelated")
+    special_categories: Optional[Dict[str, int]] = Field(None, description="Breakdown by special category type")

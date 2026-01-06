@@ -222,6 +222,35 @@ async def predict(
         confidence = result.get("confidence", 0.0)
         all_probs = result.get("probabilities", {})
         
+        # Check if model is confident enough
+        # If confidence is too low, the image might be unclear or not a valid pest image
+        MIN_CONFIDENCE_THRESHOLD = 0.35  # Below this, ask for clearer image
+        UNCERTAIN_THRESHOLD = 0.50  # Below this, warn about uncertainty
+        
+        if confidence < MIN_CONFIDENCE_THRESHOLD:
+            # Check entropy of predictions - high entropy means model is very uncertain
+            if isinstance(all_probs, dict) and len(all_probs) > 1:
+                import math
+                probs_list = list(all_probs.values())
+                entropy = -sum(p * math.log(p + 1e-10) for p in probs_list if p > 0)
+                max_entropy = math.log(len(probs_list))  # Maximum possible entropy
+                normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
+                
+                # Very high entropy (> 0.8) means model can't distinguish - likely not a valid image
+                if normalized_entropy > 0.8:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "code": "IMAGE_UNCLEAR",
+                            "message": "Unable to identify the image clearly. Please capture a clearer, well-lit photo of the affected plant area.",
+                            "confidence": round(confidence, 4),
+                            "suggestion": "Ensure good lighting and focus on the damaged/affected area of the plant.",
+                        },
+                    )
+            
+            # Low confidence but not high entropy - might be edge case
+            logger.warning(f"Low confidence prediction: {class_name} at {confidence:.2%}")
+        
         # Collect image data silently
         data_collector = get_data_collector()
         image_hash = None
@@ -574,6 +603,11 @@ async def get_feedback_classes(
     
     Returns the list of valid class names that can be used when
     submitting a correction via the feedback endpoint.
+    
+    In addition to pest classes, special categories are also accepted:
+    - "junk" or "unrelated": Image is not related to pest detection
+    - "other": Some plant issue not in our classification list
+    - "unknown": Cannot identify what the image shows
     """
     default_classes = [
         "Healthy",
@@ -589,6 +623,9 @@ async def get_feedback_classes(
         "termite",
     ]
     
+    # Special feedback categories (not pest classes)
+    special_categories = ["junk", "unrelated", "other", "unknown"]
+    
     classes = engine.class_names if engine else default_classes
     
     return ClassesResponse(
@@ -600,6 +637,7 @@ async def get_feedback_classes(
             ClassInfo(id=i, name=name)
             for i, name in enumerate(classes)
         ],
+        special_categories=special_categories,
     )
 
 
@@ -634,6 +672,8 @@ async def get_feedback_stats(
         accuracy_from_feedback=stats["accuracy_from_feedback"],
         pending_feedbacks=stats["pending_feedbacks"],
         corrections_by_class=stats["corrections_by_class"],
+        junk_reports=stats.get("junk_reports", 0),
+        special_categories=stats.get("special_categories", {}),
     )
 
 
@@ -854,3 +894,207 @@ async def get_training_data(
         "total_samples": len(training_data),
         "data": training_data,
     }
+
+
+# ============================================================
+# Model Retraining Endpoints
+# ============================================================
+
+@admin_router.get("/retrain/status")
+async def get_retrain_status(
+    api_key: dict = Depends(require_admin),
+):
+    """
+    Get model retraining status.
+    
+    Shows:
+    - Current training status (is_training, progress)
+    - Model version and total retrains count
+    - Image counts per class
+    - Whether thresholds are met for auto-retrain
+    - Last training date
+    """
+    try:
+        from ..training.retrain_manager import get_retrain_manager
+        
+        retrain_manager = get_retrain_manager(
+            model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
+            feedback_dir="./feedback_data/images",
+        )
+        
+        status = retrain_manager.get_status()
+        
+        return {
+            "status": "success",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "model": {
+                "version": status.current_version,
+                "total_retrains": status.total_retrains,
+            },
+            "retraining": {
+                "is_training": status.is_training,
+                "progress": round(status.training_progress * 100, 1),
+                "current_epoch": status.current_epoch,
+                "total_epochs": status.total_epochs,
+                "last_trained": status.last_trained,
+                "last_backup": status.last_backup_path,
+                "error": status.error,
+            },
+            "feedback_images": {
+                "total": status.total_feedback_images,
+                "junk_images": status.junk_images,
+                "per_class": status.images_per_class,
+                "classes_with_images": status.classes_with_images,
+            },
+            "thresholds": {
+                "per_class": status.threshold_per_class,
+                "total": status.threshold_total,
+                "min_classes": status.threshold_min_classes,
+                "ready_to_retrain": status.ready_to_retrain,
+                "blocked_reason": status.retrain_blocked_reason,  # Why retraining is blocked
+            },
+        }
+        
+    except Exception as e:
+        logger.exception("Error getting retrain status")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "RETRAIN_STATUS_ERROR", "message": str(e)},
+        )
+
+
+@admin_router.get("/retrain/history")
+async def get_retrain_history(
+    api_key: dict = Depends(require_admin),
+):
+    """
+    Get complete model retraining history.
+    
+    Returns a list of all past retraining runs with:
+    - Version number
+    - Timestamp
+    - Images used
+    - Duration
+    - Success/failure status
+    """
+    try:
+        from ..training.retrain_manager import get_retrain_manager
+        
+        retrain_manager = get_retrain_manager(
+            model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
+            feedback_dir="./feedback_data/images",
+        )
+        
+        history = retrain_manager.get_training_history()
+        
+        return {
+            "status": "success",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "total_entries": len(history),
+            "history": history,
+        }
+        
+    except Exception as e:
+        logger.exception("Error getting retrain history")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "RETRAIN_HISTORY_ERROR", "message": str(e)},
+        )
+
+
+@admin_router.post("/retrain/trigger")
+async def trigger_retraining(
+    force: bool = Query(False, description="Force retraining even if thresholds not met"),
+    api_key: dict = Depends(require_admin),
+):
+    """
+    Manually trigger model retraining.
+    
+    This will:
+    1. Backup the current model
+    2. Fine-tune with feedback images
+    3. Update the deployment model
+    
+    Use force=true to retrain even if thresholds aren't met.
+    """
+    try:
+        from ..training.retrain_manager import get_retrain_manager
+        
+        retrain_manager = get_retrain_manager(
+            model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
+            feedback_dir="./feedback_data/images",
+        )
+        
+        status = retrain_manager.get_status()
+        
+        if status.is_training:
+            return {
+                "status": "info",
+                "message": "Retraining already in progress",
+                "progress": round(status.training_progress * 100, 1),
+            }
+        
+        if not force and not status.ready_to_retrain:
+            return {
+                "status": "info",
+                "message": "Thresholds not met for retraining",
+                "feedback_images": status.total_feedback_images,
+                "threshold_total": status.threshold_total,
+                "hint": "Use force=true to retrain anyway",
+            }
+        
+        # Start retraining
+        started = retrain_manager.start_retraining(force=force)
+        
+        if started:
+            return {
+                "status": "success",
+                "message": "Retraining started in background",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Failed to start retraining",
+            }
+            
+    except Exception as e:
+        logger.exception("Error triggering retraining")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "RETRAIN_TRIGGER_ERROR", "message": str(e)},
+        )
+
+
+@router.get("/retrain/status")
+async def get_retrain_status_public():
+    """
+    Get model retraining status (public endpoint).
+    
+    Shows basic training status without admin details.
+    """
+    try:
+        from ..training.retrain_manager import get_retrain_manager
+        
+        retrain_manager = get_retrain_manager(
+            model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
+            feedback_dir="./feedback_data/images",
+        )
+        
+        status = retrain_manager.get_status()
+        
+        return {
+            "status": "success",
+            "is_training": status.is_training,
+            "progress": round(status.training_progress * 100, 1) if status.is_training else None,
+            "last_trained": status.last_trained,
+            "feedback_images_collected": status.total_feedback_images,
+            "ready_for_improvement": status.ready_to_retrain,
+        }
+        
+    except Exception as e:
+        return {
+            "status": "unavailable",
+            "message": "Retraining status not available",
+        }
+

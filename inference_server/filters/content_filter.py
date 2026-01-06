@@ -1,31 +1,24 @@
 """
-Content Relevance Filter (Layer 3)
-==================================
-Filters out irrelevant/junk images that are not related to pest detection:
-- Domain classification (agricultural/plant images)
-- Color histogram analysis (vegetation patterns)
-- Edge density analysis
-- Texture analysis for natural images
+Content Relevance Filter (Layer 3) - Simplified
+================================================
+Simplified filter that only blocks obvious non-plant images:
+- Face detection (selfies, portraits)
+- Synthetic image detection (solid colors, screenshots)
+
+The model will handle classification, and users can report "junk" 
+images via feedback for continuous learning.
 """
 
 import logging
-from typing import Tuple, Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
-import io
 import math
 
 logger = logging.getLogger(__name__)
 
 # Lazy imports
-PIL_AVAILABLE = False
 CV2_AVAILABLE = False
 NUMPY_AVAILABLE = False
-
-try:
-    from PIL import Image
-    PIL_AVAILABLE = True
-except ImportError:
-    pass
 
 try:
     import cv2
@@ -57,59 +50,25 @@ class ContentFilterResult:
 
 class ContentFilter:
     """
-    Layer 3: Content relevance filtering.
+    Layer 3: Simplified content relevance filtering.
     
-    Uses multiple heuristics to determine if an image is likely
-    related to sugarcane/agricultural pest detection.
+    Only blocks obvious non-plant images:
+    1. Faces (selfies, portraits)
+    2. Pure synthetic images (solid colors, perfect gradients)
     
-    Features analyzed:
-    1. Color distribution (green/brown for vegetation)
-    2. Edge density (natural textures)
-    3. Color entropy (natural variation)
-    4. Vegetation index estimation
+    All other images pass through to the model.
+    Users can report irrelevant images via the "junk" feedback option.
     """
     
-    # Color ranges for vegetation (in HSV)
-    # Green vegetation: H=35-85, S=25-255, V=25-255
-    GREEN_LOWER = (35, 25, 25)
-    GREEN_UPPER = (85, 255, 255)
-    
-    # Brown/dead vegetation: H=10-30, S=25-200, V=25-200
-    BROWN_LOWER = (10, 25, 25)
-    BROWN_UPPER = (30, 200, 200)
-    
-    # Yellow (stressed vegetation): H=20-35, S=25-255, V=100-255
-    YELLOW_LOWER = (20, 25, 100)
-    YELLOW_UPPER = (35, 255, 255)
-    
-    def __init__(
-        self,
-        relevance_threshold: float = 0.50,
-        min_vegetation_ratio: float = 0.15,
-        min_natural_score: float = 0.30,
-        weights: Optional[Dict[str, float]] = None,
-    ):
+    def __init__(self, enabled: bool = True):
         """
         Initialize content filter.
         
         Args:
-            relevance_threshold: Minimum score to consider relevant
-            min_vegetation_ratio: Minimum vegetation color ratio
-            min_natural_score: Minimum natural image score
-            weights: Custom weights for different features
+            enabled: Whether to enable filtering (can be disabled)
         """
-        self.relevance_threshold = relevance_threshold
-        self.min_vegetation_ratio = min_vegetation_ratio
-        self.min_natural_score = min_natural_score
-        
-        # Default weights for combining features
-        self.weights = weights or {
-            "vegetation_ratio": 0.35,
-            "edge_density": 0.20,
-            "color_entropy": 0.15,
-            "texture_score": 0.15,
-            "aspect_naturalness": 0.15,
-        }
+        self.enabled = enabled
+        self._face_cascade = None
     
     def filter(self, image_data: bytes) -> ContentFilterResult:
         """
@@ -121,8 +80,16 @@ class ContentFilter:
         Returns:
             ContentFilterResult with relevance assessment
         """
+        # If disabled, pass everything
+        if not self.enabled:
+            return ContentFilterResult(
+                relevant=True,
+                relevance_score=1.0,
+                detected_category="not_filtered",
+                analysis_details={"filter_enabled": False},
+            )
+        
         if not (CV2_AVAILABLE and NUMPY_AVAILABLE):
-            # If libraries not available, pass through with warning
             logger.warning("Content filtering libraries not available, skipping check")
             return ContentFilterResult(
                 relevant=True,
@@ -144,70 +111,56 @@ class ContentFilter:
                     error_message="Could not decode image for content analysis",
                 )
             
-            # Resize for faster processing if needed
+            # Resize for faster processing
             max_dim = 512
             h, w = img.shape[:2]
             if max(h, w) > max_dim:
                 scale = max_dim / max(h, w)
                 img = cv2.resize(img, None, fx=scale, fy=scale)
             
-            # Run analysis
             analysis = {}
             
-            # 1. Vegetation color analysis
-            veg_ratio, veg_details = self._analyze_vegetation_colors(img)
-            analysis["vegetation_ratio"] = veg_ratio
-            analysis["vegetation_details"] = veg_details
+            # 1. Face detection - reject selfies/portraits
+            has_face, num_faces = self._detect_faces(img)
+            analysis["has_face"] = has_face
+            analysis["num_faces"] = num_faces
             
-            # 2. Edge density analysis
-            edge_density = self._analyze_edge_density(img)
-            analysis["edge_density"] = edge_density
+            if has_face:
+                return ContentFilterResult(
+                    relevant=False,
+                    relevance_score=0.0,
+                    error_code="HUMAN_DETECTED",
+                    error_message="Image appears to contain a person/face. Please upload an image of a plant or pest damage.",
+                    detected_category="human_person",
+                    analysis_details=analysis,
+                )
             
-            # 3. Color entropy (natural variation)
-            color_entropy = self._analyze_color_entropy(img)
-            analysis["color_entropy"] = color_entropy
+            # 2. Check for pure synthetic images (solid colors, etc.)
+            is_synthetic, synthetic_reason = self._check_synthetic(img)
+            analysis["is_synthetic"] = is_synthetic
+            analysis["synthetic_reason"] = synthetic_reason
             
-            # 4. Texture analysis
-            texture_score = self._analyze_texture(img)
-            analysis["texture_score"] = texture_score
+            if is_synthetic:
+                return ContentFilterResult(
+                    relevant=False,
+                    relevance_score=0.1,
+                    error_code="SYNTHETIC_IMAGE",
+                    error_message=f"Image appears to be synthetic ({synthetic_reason}). Please capture a real photo of the plant.",
+                    detected_category="synthetic_image",
+                    analysis_details=analysis,
+                )
             
-            # 5. Aspect naturalness (not synthetic/screen capture)
-            naturalness = self._check_naturalness(img)
-            analysis["aspect_naturalness"] = naturalness
-            
-            # Calculate weighted score
-            relevance_score = (
-                self.weights["vegetation_ratio"] * min(veg_ratio / 0.3, 1.0) +
-                self.weights["edge_density"] * min(edge_density / 0.15, 1.0) +
-                self.weights["color_entropy"] * min(color_entropy / 5.0, 1.0) +
-                self.weights["texture_score"] * texture_score +
-                self.weights["aspect_naturalness"] * naturalness
-            )
-            
-            # Clamp to 0-1
-            relevance_score = max(0.0, min(1.0, relevance_score))
-            
-            # Determine category
-            category = self._determine_category(analysis, relevance_score)
-            
-            # Check if relevant
-            is_relevant = (
-                relevance_score >= self.relevance_threshold and
-                veg_ratio >= self.min_vegetation_ratio * 0.5  # Some tolerance
-            )
-            
+            # All other images pass through
             return ContentFilterResult(
-                relevant=is_relevant,
-                relevance_score=relevance_score,
-                detected_category=category,
+                relevant=True,
+                relevance_score=0.8,
+                detected_category="potential_plant",
                 analysis_details=analysis,
-                error_code=None if is_relevant else "CONTENT_IRRELEVANT",
-                error_message=None if is_relevant else f"Image does not appear to be agricultural/plant-related (score: {relevance_score:.2f})",
             )
             
         except Exception as e:
             logger.error(f"Content filtering error: {e}")
-            # On error, allow through but flag it
+            # On error, allow through
             return ContentFilterResult(
                 relevant=True,
                 relevance_score=0.5,
@@ -215,150 +168,83 @@ class ContentFilter:
                 analysis_details={"error": str(e)},
             )
     
-    def _analyze_vegetation_colors(self, img: np.ndarray) -> Tuple[float, Dict]:
-        """Analyze vegetation-related colors in image."""
-        # Convert to HSV
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        
-        # Create masks for different vegetation colors
-        green_mask = cv2.inRange(hsv, self.GREEN_LOWER, self.GREEN_UPPER)
-        brown_mask = cv2.inRange(hsv, self.BROWN_LOWER, self.BROWN_UPPER)
-        yellow_mask = cv2.inRange(hsv, self.YELLOW_LOWER, self.YELLOW_UPPER)
-        
-        # Calculate ratios
-        total_pixels = img.shape[0] * img.shape[1]
-        green_ratio = np.sum(green_mask > 0) / total_pixels
-        brown_ratio = np.sum(brown_mask > 0) / total_pixels
-        yellow_ratio = np.sum(yellow_mask > 0) / total_pixels
-        
-        # Combined vegetation ratio
-        vegetation_ratio = green_ratio + brown_ratio * 0.7 + yellow_ratio * 0.5
-        
-        details = {
-            "green_ratio": float(green_ratio),
-            "brown_ratio": float(brown_ratio),
-            "yellow_ratio": float(yellow_ratio),
-            "combined": float(vegetation_ratio),
-        }
-        
-        return float(vegetation_ratio), details
-    
-    def _analyze_edge_density(self, img: np.ndarray) -> float:
-        """Analyze edge density (natural images have moderate edge density)."""
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Apply Canny edge detection
-        edges = cv2.Canny(gray, 50, 150)
-        
-        # Calculate edge density
-        edge_density = np.sum(edges > 0) / (edges.shape[0] * edges.shape[1])
-        
-        return float(edge_density)
-    
-    def _analyze_color_entropy(self, img: np.ndarray) -> float:
-        """Calculate color entropy (natural images have higher entropy)."""
-        # Convert to grayscale for histogram
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Calculate histogram
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-        hist = hist.flatten() / hist.sum()
-        
-        # Calculate entropy
-        hist = hist[hist > 0]  # Remove zeros
-        entropy = -np.sum(hist * np.log2(hist))
-        
-        return float(entropy)
-    
-    def _analyze_texture(self, img: np.ndarray) -> float:
-        """Analyze texture using Laplacian variance."""
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Laplacian variance (measure of texture/sharpness)
-        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-        variance = laplacian.var()
-        
-        # Normalize to 0-1 range (typical values 0-5000)
-        texture_score = min(1.0, variance / 2000)
-        
-        return float(texture_score)
-    
-    def _check_naturalness(self, img: np.ndarray) -> float:
+    def _detect_faces(self, img: np.ndarray) -> tuple:
         """
-        Check if image appears natural vs synthetic/screen capture.
+        Detect faces using Haar cascade.
         
-        Synthetic images often have:
-        - Very uniform colors
-        - Sharp artificial edges
-        - Perfect gradients
+        Returns:
+            Tuple of (has_face: bool, num_faces: int)
         """
-        h, w = img.shape[:2]
-        score = 1.0
-        
-        # Check for too-uniform colors (screenshots, solid backgrounds)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        std_dev = np.std(gray)
-        if std_dev < 20:  # Very uniform
-            score *= 0.5
-        
-        # Check for perfect horizontal/vertical lines (UI elements)
-        edges = cv2.Canny(gray, 50, 150)
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, 100, minLineLength=100, maxLineGap=10)
-        
-        if lines is not None:
-            h_lines = 0
-            v_lines = 0
-            for line in lines:
-                x1, y1, x2, y2 = line[0]
-                angle = abs(math.atan2(y2-y1, x2-x1) * 180 / math.pi)
-                if angle < 5 or angle > 175:  # Horizontal
-                    h_lines += 1
-                elif 85 < angle < 95:  # Vertical
-                    v_lines += 1
+        try:
+            if self._face_cascade is None:
+                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                self._face_cascade = cv2.CascadeClassifier(cascade_path)
             
-            # Many perfect lines suggest synthetic image
-            if h_lines + v_lines > 10:
-                score *= 0.7
-        
-        # Check for unnatural color distributions
-        channels = cv2.split(img)
-        for channel in channels:
-            unique_colors = len(np.unique(channel))
-            if unique_colors < 50:  # Very few unique values
-                score *= 0.9
-        
-        return score
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            faces = self._face_cascade.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(30, 30),
+                flags=cv2.CASCADE_SCALE_IMAGE
+            )
+            
+            num_faces = len(faces)
+            return num_faces > 0, num_faces
+            
+        except Exception as e:
+            logger.warning(f"Face detection failed: {e}")
+            return False, 0
     
-    def _determine_category(self, analysis: Dict, score: float) -> str:
-        """Determine image category based on analysis."""
-        veg_ratio = analysis.get("vegetation_ratio", 0)
-        edge_density = analysis.get("edge_density", 0)
-        naturalness = analysis.get("aspect_naturalness", 0)
+    def _check_synthetic(self, img: np.ndarray) -> tuple:
+        """
+        Check if image is obviously synthetic (solid color, screenshot, etc.)
         
-        if veg_ratio > 0.3 and naturalness > 0.7:
-            return "plant_vegetation"
-        elif veg_ratio > 0.15 and edge_density > 0.1:
-            return "agricultural_scene"
-        elif naturalness < 0.5:
-            return "synthetic_screenshot"
-        elif veg_ratio < 0.05:
-            return "non_vegetation"
-        elif score >= self.relevance_threshold:
-            return "possibly_relevant"
-        else:
-            return "irrelevant"
+        Returns:
+            Tuple of (is_synthetic: bool, reason: str)
+        """
+        try:
+            h, w = img.shape[:2]
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Check for solid/near-solid color
+            std_dev = np.std(gray)
+            if std_dev < 10:
+                return True, "solid_color"
+            
+            # Check for very few unique colors (synthetic graphics)
+            unique_colors = len(np.unique(img.reshape(-1, 3), axis=0))
+            total_pixels = h * w
+            color_ratio = unique_colors / total_pixels
+            
+            if unique_colors < 100 and color_ratio < 0.001:
+                return True, "limited_colors"
+            
+            # Check for pure gradients (artificial)
+            # Compute Laplacian variance (texture measure)
+            laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+            variance = laplacian.var()
+            
+            if variance < 50 and std_dev < 30:
+                return True, "no_texture"
+            
+            return False, None
+            
+        except Exception as e:
+            logger.warning(f"Synthetic check failed: {e}")
+            return False, None
 
 
 # Global filter instance
 _filter: Optional[ContentFilter] = None
 
 
-def get_content_filter(**kwargs) -> ContentFilter:
+def get_content_filter(enabled: bool = True) -> ContentFilter:
     """Get or create the global content filter."""
     global _filter
     if _filter is None:
-        _filter = ContentFilter(**kwargs)
+        _filter = ContentFilter(enabled=enabled)
     return _filter
 
 

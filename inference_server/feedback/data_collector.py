@@ -198,7 +198,7 @@ class DataCollector:
             self._metadata_cache[image_hash] = metadata
             self._save_metadata(metadata)
         
-        logger.debug(f"Collected image: {image_hash} from user {user_id}")
+        logger.info(f"Collected image: {image_hash} -> {save_dir}/{filename}, metadata cached: {image_hash in self._metadata_cache}")
         return image_hash
     
     def update_with_feedback(
@@ -215,9 +215,13 @@ class DataCollector:
         Returns:
             True if successful
         """
+        logger.info(f"update_with_feedback called: hash={image_hash}, is_correct={is_correct}, corrected_class={corrected_class}")
+        logger.info(f"  Cache has {len(self._metadata_cache)} entries, looking for hash...")
+        
         with self._lock:
             if image_hash not in self._metadata_cache:
-                logger.warning(f"Image hash not found: {image_hash}")
+                logger.warning(f"Image hash not found in cache: {image_hash}")
+                logger.warning(f"  Available hashes: {list(self._metadata_cache.keys())[:5]}...")
                 return False
             
             metadata = self._metadata_cache[image_hash]
@@ -344,11 +348,17 @@ class DataCollector:
     def _save_metadata(self, metadata: ImageMetadata):
         """Save metadata to JSON file."""
         try:
+            # Ensure metadata directory exists
+            self.metadata_dir.mkdir(parents=True, exist_ok=True)
+            
             filepath = self.metadata_dir / f"{metadata.image_hash}.json"
             with open(filepath, "w") as f:
                 json.dump(metadata.to_dict(), f, indent=2)
+            logger.debug(f"Saved metadata: {filepath}")
         except Exception as e:
-            logger.error(f"Failed to save metadata: {e}")
+            logger.error(f"Failed to save metadata for {metadata.image_hash}: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _load_metadata(self):
         """Load all metadata from files."""

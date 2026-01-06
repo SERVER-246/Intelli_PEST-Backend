@@ -107,6 +107,46 @@ class FeedbackManager:
             "correct_predictions": 0,
             "incorrect_predictions": 0,
             "corrections_by_class": {},
+            "junk_reports": 0,  # Count of images reported as junk/unrelated
+            "special_categories": {},  # Count by special category type
+        }
+        
+        # Class name aliases for flexible matching (display name -> canonical)
+        # Maps common variations to the canonical class names used by the model
+        self._class_aliases = {
+            # Army worm variations
+            "armyworm": "army worm",
+            "army worm": "army worm",
+            "fall armyworm": "army worm",
+            # Porcupine
+            "porcupine damage": "porcupine damage",
+            "porcupine": "porcupine damage",
+            # Rat
+            "rat damage": "Rat damage",
+            "rat": "Rat damage",
+            # Mealy bug
+            "mealy bug": "mealy bug",
+            "mealybug": "mealy bug",
+            # Borers
+            "internode borer": "Internode borer",
+            "pink borer": "Pink borer",
+            "stalk borer": "Stalk borer",
+            "top borer": "Top borer",
+            "root borer": "root borer",
+            # Others
+            "termite": "termite",
+            "healthy": "Healthy",
+        }
+        
+        # Special feedback categories (not actual pest classes)
+        # These are used for reporting images that shouldn't have been classified
+        self._special_categories = {
+            "junk": "JUNK",  # Unrelated image (not a plant/pest)
+            "unrelated": "JUNK",  # Alias for junk
+            "not applicable": "JUNK",  # Alias
+            "n/a": "JUNK",  # Alias
+            "other": "OTHER",  # Some other plant issue not in our classes
+            "unknown": "UNKNOWN",  # Can't identify what it is
         }
         
         # Create directories
@@ -135,6 +175,68 @@ class FeedbackManager:
                 (self.images_dir / "correct" / class_name).mkdir(parents=True, exist_ok=True)
                 (self.images_dir / "corrected" / class_name).mkdir(parents=True, exist_ok=True)
     
+    def _match_class_name(self, input_class: str) -> Optional[str]:
+        """
+        Match user-provided class name to canonical class name.
+        
+        Handles case variations and common aliases.
+        
+        Args:
+            input_class: Class name from user (e.g., "Armyworm", "army worm")
+            
+        Returns:
+            Canonical class name if matched, None if invalid
+        """
+        if not input_class:
+            return None
+            
+        # Normalize input: lowercase, strip whitespace
+        normalized = input_class.lower().strip()
+        
+        # First, check exact match (case-insensitive)
+        for class_name in self.class_names:
+            if class_name.lower() == normalized:
+                return class_name
+        
+        # Check aliases
+        if normalized in self._class_aliases:
+            alias_target = self._class_aliases[normalized]
+            # Verify the alias target is in our class list
+            for class_name in self.class_names:
+                if class_name.lower() == alias_target.lower():
+                    return class_name
+        
+        # Try partial match (user might submit "Armyworm" for "army worm")
+        # Remove spaces and check
+        no_space = normalized.replace(" ", "").replace("_", "")
+        for class_name in self.class_names:
+            if class_name.lower().replace(" ", "").replace("_", "") == no_space:
+                return class_name
+        
+        # No match found
+        return None
+    
+    def _match_special_category(self, input_class: str) -> Optional[str]:
+        """
+        Check if input is a special feedback category (not a pest class).
+        
+        Special categories include:
+        - JUNK: Unrelated images that shouldn't have been classified
+        - OTHER: Plant issues not in our pest classes
+        - UNKNOWN: Cannot identify what the image shows
+        
+        Args:
+            input_class: User input like "junk", "unrelated", "n/a"
+            
+        Returns:
+            Category name (JUNK, OTHER, UNKNOWN) if matched, None otherwise
+        """
+        if not input_class:
+            return None
+        
+        normalized = input_class.lower().strip()
+        return self._special_categories.get(normalized)
+
     def register_prediction(
         self,
         predicted_class: str,
@@ -214,15 +316,30 @@ class FeedbackManager:
             pending = self._pending.pop(feedback_id)
         
         # Validate correct_class if provided
+        is_special_category = False
+        special_category = None
+        
         if not is_correct:
             if correct_class and self.class_names:
-                if correct_class not in self.class_names:
-                    return {
-                        "status": "error",
-                        "message": f"Invalid class name: {correct_class}",
-                        "code": "INVALID_CLASS",
-                        "valid_classes": self.class_names,
-                    }
+                # First check if it's a special category (junk, unrelated, etc.)
+                special_category = self._match_special_category(correct_class)
+                if special_category:
+                    # This is a special category feedback
+                    is_special_category = True
+                    correct_class = special_category  # Use the category name
+                    logger.info(f"Special category feedback: {special_category} for prediction {pending.predicted_class}")
+                else:
+                    # Try to match against pest classes
+                    matched_class = self._match_class_name(correct_class)
+                    if matched_class is None:
+                        logger.warning(f"Invalid class name submitted: '{correct_class}', valid: {self.class_names}")
+                        return {
+                            "status": "error",
+                            "message": f"Invalid class name: {correct_class}",
+                            "code": "INVALID_CLASS",
+                            "valid_classes": self.class_names + ["junk", "unrelated", "other", "unknown"],
+                        }
+                    correct_class = matched_class  # Use the canonical class name
             elif correct_class_id is not None and self.class_names:
                 if 0 <= correct_class_id < len(self.class_names):
                     correct_class = self.class_names[correct_class_id]
@@ -261,14 +378,18 @@ class FeedbackManager:
                 is_trusted=is_trusted,
             )
         
-        # Save image if available (legacy - data collector handles this now)
+        # Save image if available
         image_path = None
         if pending.image_bytes and self.save_images:
+            # Determine if this is a junk report
+            is_junk = is_special_category and special_category == "JUNK"
+            
             image_path = self._save_feedback_image(
                 pending.image_bytes,
                 pending.image_hash,
                 is_correct,
                 correct_class if not is_correct else pending.predicted_class,
+                is_junk=is_junk,
             )
         
         # Create feedback entry
@@ -299,11 +420,18 @@ class FeedbackManager:
                 self._stats["correct_predictions"] += 1
             else:
                 self._stats["incorrect_predictions"] += 1
-                # Track corrections by class
+                # Track corrections by class or special category
                 if correct_class:
-                    key = f"{pending.predicted_class} -> {correct_class}"
-                    self._stats["corrections_by_class"][key] = \
-                        self._stats["corrections_by_class"].get(key, 0) + 1
+                    if is_special_category:
+                        # Track special category stats
+                        self._stats["junk_reports"] += 1
+                        self._stats["special_categories"][special_category] = \
+                            self._stats["special_categories"].get(special_category, 0) + 1
+                    else:
+                        # Track class corrections
+                        key = f"{pending.predicted_class} -> {correct_class}"
+                        self._stats["corrections_by_class"][key] = \
+                            self._stats["corrections_by_class"].get(key, 0) + 1
         
         self._save_feedback_entry(entry)
         
@@ -361,11 +489,18 @@ class FeedbackManager:
         image_hash: str,
         is_correct: bool,
         class_name: str,
+        is_junk: bool = False,
     ) -> Optional[str]:
         """Save image to feedback directory for retraining."""
         try:
-            subdir = "correct" if is_correct else "corrected"
-            save_dir = self.images_dir / subdir / class_name
+            # Determine save directory
+            if is_junk:
+                subdir = "junk"
+                save_dir = self.images_dir / subdir
+            else:
+                subdir = "correct" if is_correct else "corrected"
+                save_dir = self.images_dir / subdir / class_name
+            
             save_dir.mkdir(parents=True, exist_ok=True)
             
             # Use hash + timestamp for unique filename
@@ -376,10 +511,38 @@ class FeedbackManager:
             with open(filepath, "wb") as f:
                 f.write(image_bytes)
             
+            # Notify retrain manager about new feedback image
+            self._notify_retrain_manager(class_name, str(filepath), not is_correct, is_junk)
+            
             return str(filepath)
         except Exception as e:
             logger.error(f"Failed to save feedback image: {e}")
             return None
+    
+    def _notify_retrain_manager(
+        self,
+        class_name: str,
+        image_path: str,
+        is_correction: bool,
+        is_junk: bool,
+    ):
+        """Notify the retrain manager about new feedback image."""
+        try:
+            from ..training.retrain_manager import get_retrain_manager
+            
+            retrain_manager = get_retrain_manager(
+                model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
+                feedback_dir=str(self.images_dir),
+            )
+            
+            retrain_manager.record_feedback_image(
+                class_name=class_name,
+                image_path=image_path,
+                is_correction=is_correction,
+                is_junk=is_junk,
+            )
+        except Exception as e:
+            logger.debug(f"Could not notify retrain manager: {e}")
     
     def _save_feedback_entry(self, entry: FeedbackEntry):
         """Save feedback entry to JSON file."""

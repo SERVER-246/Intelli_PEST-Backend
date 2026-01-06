@@ -96,6 +96,11 @@ class ValidationPipeline:
         "CORRUPT_IMAGE": "The image appears corrupted. Please try a different image.",
         "DECODE_ERROR": "Could not process the image. Please try a different format.",
         "CONTENT_IRRELEVANT": "Please upload a clear image of sugarcane plant or suspected pest damage.",
+        "HUMAN_DETECTED": "Please upload an image of a plant or pest damage, not a photo of a person.",
+        "NON_PLANT_IMAGE": "This doesn't appear to be an agricultural/plant image. Please upload an image of sugarcane or pest damage.",
+        "SYNTHETIC_IMAGE": "This appears to be a screenshot or synthetic image. Please capture a real photo of the plant.",
+        "NON_PLANT_OBJECT": "This image doesn't contain any plant material. Please photograph the sugarcane plant or pest damage.",
+        "IMAGE_UNCLEAR": "Unable to identify the image clearly. Please capture a clearer, well-lit photo of the affected area.",
         "OUT_OF_DISTRIBUTION": "The image doesn't appear to match our training data. Please upload a clearer image of the plant/pest.",
     }
     
