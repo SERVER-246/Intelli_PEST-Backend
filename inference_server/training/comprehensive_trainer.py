@@ -851,7 +851,7 @@ class ComprehensiveTrainer:
             state_dict = checkpoint
         
         try:
-            from enhanced_student_model import EnhancedStudentModel
+            from enhanced_student_model import EnhancedStudentModel  # type: ignore
             
             stem_weight = state_dict.get('stem.0.weight')
             base_channels = stem_weight.shape[0] if stem_weight is not None else 48

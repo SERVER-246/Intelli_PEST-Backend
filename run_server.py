@@ -4,9 +4,15 @@ Simple server startup script with model loading.
 """
 import os
 import sys
+import logging
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Configure logging with timestamps
+LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+logging.basicConfig(format=LOG_FORMAT, datefmt=DATE_FORMAT, level=logging.INFO)
 
 # Available models - use the rotation-robust exported models
 MODELS = {
@@ -103,11 +109,49 @@ if __name__ == "__main__":
     print("Concurrent connections: 100+ (async support enabled)")
     print("=" * 60)
     
+    # Configure uvicorn logging with timestamps (using uvicorn's default access format)
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "()": "uvicorn.logging.DefaultFormatter",
+                "fmt": "%(asctime)s - %(levelprefix)s %(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+                "use_colors": True,
+            },
+            "access": {
+                "()": "uvicorn.logging.AccessFormatter",
+                "fmt": "%(asctime)s - %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+                "use_colors": True,
+            },
+        },
+        "handlers": {
+            "default": {
+                "formatter": "default",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+            },
+            "access": {
+                "formatter": "access",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"level": "INFO"},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
+    
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8000,
         log_level="info",
+        log_config=log_config,
         limit_concurrency=100,  # Support up to 100 concurrent connections
         backlog=2048,  # Connection queue size
         timeout_keep_alive=60,  # Keep connections alive for 60s

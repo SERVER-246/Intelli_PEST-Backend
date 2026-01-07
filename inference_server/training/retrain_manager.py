@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any, Callable, Tuple
 import hashlib
 
 logger = logging.getLogger(__name__)
@@ -796,7 +796,7 @@ class ModelRetrainingManager:
         
         # Try to import EnhancedStudentModel
         try:
-            from enhanced_student_model import EnhancedStudentModel
+            from enhanced_student_model import EnhancedStudentModel  # type: ignore
             
             # Get base channels from state dict
             stem_weight = state_dict.get('stem.0.weight')

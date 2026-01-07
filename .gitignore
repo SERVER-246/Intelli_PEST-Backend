@@ -78,6 +78,21 @@ deployment_models/
 plots_metrics/
 metrics_output/
 kfold_results/
+feedback_data/
+test_images/
+
+# ============================================
+# Test and Debug Scripts (not part of production)
+# ============================================
+analyze_unknown.py
+compare_predictions.py
+debug_filter.py
+test_feedback_images.py
+test_feedback_images_filter.py
+test_filter.py
+test_unknown_filter.py
+test_unknown_images.py
+*_old.py
 
 # ============================================
 # Logs
