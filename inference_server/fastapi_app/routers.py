@@ -1067,11 +1067,13 @@ async def trigger_retraining(
 
 
 @router.get("/retrain/status")
+@router.get("/retraining/status")  # Alias for compatibility
 async def get_retrain_status_public():
     """
     Get model retraining status (public endpoint).
     
     Shows basic training status without admin details.
+    Available at both /retrain/status and /retraining/status.
     """
     try:
         from ..training.retrain_manager import get_retrain_manager

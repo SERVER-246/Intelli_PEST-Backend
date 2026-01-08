@@ -108,6 +108,8 @@ class ComprehensiveTrainingConfig:
     kd_beta: float = 0.7   # Soft label (teacher) weight
     teacher_models_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
     use_student_as_teacher: bool = True  # Include deployed student as 12th teacher
+    use_sequential_teachers: bool = True  # Train with ONE teacher at a time
+    epochs_per_teacher: int = 4  # More epochs per teacher for comprehensive training
     
     # EWC (Elastic Weight Consolidation)
     use_ewc: bool = True
@@ -627,7 +629,7 @@ class ComprehensiveTrainer:
             # === STEP 3: Create dataloaders ===
             logger.info("Step 3: Creating dataloaders...")
             train_loader = self._create_balanced_dataloader(train_dataset, device)
-            val_loader = DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False, num_workers=0)
+            val_loader = DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False, num_workers=12, persistent_workers=True)
             
             # === STEP 4: Load model ===
             logger.info("Step 4: Loading model...")
@@ -655,12 +657,122 @@ class ComprehensiveTrainer:
             
             # === STEP 7: Training loop ===
             logger.info("Step 7: Starting training loop...")
-            self._state.total_epochs = self.config.epochs
             
             pre_training_state = copy.deepcopy(model.state_dict())
             best_state = None
             prev_train_acc = None
             
+            # Check if we have sequential KD
+            sequential_kd = getattr(self, '_sequential_kd', None)
+            kd_loss_fn = getattr(self, '_kd_loss_fn', None)
+            
+            if sequential_kd is not None and kd_loss_fn is not None:
+                # === SEQUENTIAL TEACHER TRAINING ===
+                total_teachers = sequential_kd.get_teacher_count()
+                total_epochs = total_teachers * self.config.epochs_per_teacher
+                self._state.total_epochs = total_epochs
+                global_epoch = 0
+                
+                logger.info(f"Sequential KD Training: {total_teachers} teachers × {self.config.epochs_per_teacher} epochs = {total_epochs} total epochs")
+                
+                for teacher_name, teacher, phase_num, total_phases in sequential_kd.iterate_teachers():
+                    logger.info(f"═══════════════════════════════════════════")
+                    logger.info(f"Training with teacher: {teacher_name} ({phase_num}/{total_phases})")
+                    logger.info(f"═══════════════════════════════════════════")
+                    
+                    for local_epoch in range(self.config.epochs_per_teacher):
+                        global_epoch += 1
+                        self._state.current_epoch = global_epoch
+                        
+                        # === Warmup (first teacher only) ===
+                        if phase_num == 1 and local_epoch < self.config.warmup_epochs:
+                            warmup_lr = self.config.learning_rate * (local_epoch + 1) / self.config.warmup_epochs
+                            for param_group in optimizer.param_groups:
+                                param_group['lr'] = warmup_lr
+                            logger.info(f"[Warmup] LR: {warmup_lr:.6f}")
+                        
+                        # === Progressive unfreezing ===
+                        if global_epoch == self.config.freeze_backbone_epochs:
+                            self._unfreeze_backbone(model, optimizer)
+                        
+                        # === Train epoch with SINGLE teacher ===
+                        train_loss, train_acc = self._train_epoch_with_teacher(
+                            model, train_loader, optimizer, criterion, scaler, device, global_epoch, teacher, kd_loss_fn
+                        )
+                        
+                        # === Collapse detection ===
+                        if prev_train_acc is not None and (prev_train_acc - train_acc) > self.config.collapse_threshold:
+                            logger.warning(f"⚠️ COLLAPSE DETECTED! Accuracy dropped {prev_train_acc:.2f}% → {train_acc:.2f}%")
+                            logger.warning("Rolling back to pre-training state...")
+                            model.load_state_dict(pre_training_state)
+                            self._state.is_training = False
+                            self._state.is_completed = False
+                            self._save_state()
+                            return
+                        
+                        prev_train_acc = train_acc
+                        
+                        # === Update scheduler ===
+                        if scheduler and global_epoch >= self.config.warmup_epochs:
+                            scheduler.step()
+                        
+                        # === Dual validation ===
+                        val_loss, upright_acc = self._validate_upright(model, val_loader, criterion, device)
+                        rotation_acc = self._validate_rotation(model, val_loader, device)
+                        
+                        self._state.current_upright_accuracy = upright_acc
+                        self._state.current_rotation_accuracy = rotation_acc
+                        
+                        # Track improvements
+                        is_best = False
+                        if upright_acc > self._state.best_upright_accuracy + self.config.min_accuracy_improvement:
+                            self._state.best_upright_accuracy = upright_acc
+                            self._state.best_epoch = global_epoch
+                            self._state.epochs_no_upright_improve = 0
+                            best_state = copy.deepcopy(model.state_dict())
+                            is_best = True
+                        else:
+                            self._state.epochs_no_upright_improve += 1
+                        
+                        if rotation_acc > self._state.best_rotation_accuracy + self.config.min_accuracy_improvement:
+                            self._state.best_rotation_accuracy = rotation_acc
+                            self._state.epochs_no_rotation_improve = 0
+                        else:
+                            self._state.epochs_no_rotation_improve += 1
+                        
+                        current_lr = optimizer.param_groups[0]['lr']
+                        logger.info(
+                            f"[{teacher_name}] Epoch {local_epoch+1}/{self.config.epochs_per_teacher} (Global: {global_epoch}/{total_epochs}) - "
+                            f"Train: {train_acc:.2f}% | "
+                            f"Upright: {upright_acc:.2f}% (best: {self._state.best_upright_accuracy:.2f}%) | "
+                            f"Rotation: {rotation_acc:.2f}% (best: {self._state.best_rotation_accuracy:.2f}%)"
+                        )
+                        
+                        # === Save checkpoint ===
+                        if global_epoch % self.config.checkpoint_every_n_epochs == 0 or is_best:
+                            self._save_checkpoint(global_epoch, model, optimizer, scheduler, is_best)
+                        
+                        self._save_state()
+                
+                # Sequential KD complete - restore best and finalize
+                logger.info("Step 8: Finalizing...")
+                if best_state is not None:
+                    model.load_state_dict(best_state)
+                    logger.info(f"Restored best model (upright: {self._state.best_upright_accuracy:.2f}%, rotation: {self._state.best_rotation_accuracy:.2f}%)")
+                
+                # Save final model
+                self._save_final_model(model)
+                self._state.is_training = False
+                self._state.is_completed = True
+                self._save_state()
+                
+                logger.info(f"Sequential KD Comprehensive training complete!")
+                logger.info(f"Best upright accuracy: {self._state.best_upright_accuracy:.2f}%")
+                logger.info(f"Best rotation accuracy: {self._state.best_rotation_accuracy:.2f}%")
+                return
+            
+            # === FALLBACK: Original training loop (no sequential KD) ===
+            self._state.total_epochs = self.config.epochs
             for epoch in range(start_epoch, self.config.epochs):
                 self._state.current_epoch = epoch + 1
                 
@@ -806,8 +918,9 @@ class ComprehensiveTrainer:
                 dataset,
                 batch_size=self.config.batch_size,
                 shuffle=True,
-                num_workers=0,
-                pin_memory=True if device == 'cuda' else False
+                num_workers=12,
+                pin_memory=True if device == 'cuda' else False,
+                persistent_workers=True
             )
         
         # Compute sample weights
@@ -838,8 +951,9 @@ class ComprehensiveTrainer:
             dataset,
             batch_size=self.config.batch_size,
             sampler=sampler,
-            num_workers=0,
-            pin_memory=True if device == 'cuda' else False
+            num_workers=12,
+            pin_memory=True if device == 'cuda' else False,
+            persistent_workers=True
         )
     
     def _load_model(self, num_classes: int, device: str):
@@ -946,13 +1060,13 @@ class ComprehensiveTrainer:
             logger.info(f"Class weights: {dict(zip(train_dataset.class_names, [f'{w:.2f}' for w in weights]))}")
         
         # Setup Knowledge Distillation (if enabled)
-        teacher_ensemble = None
+        sequential_kd = None
         kd_loss_fn = None
         if self.config.use_knowledge_distillation:
             try:
-                from .kd_training import TeacherEnsemble, KDConfig, KnowledgeDistillationLoss
+                from .kd_training import SequentialTeacherKD, KDConfig, KnowledgeDistillationLoss
                 
-                logger.info("Setting up Knowledge Distillation with teacher ensemble...")
+                logger.info("Setting up Sequential Knowledge Distillation...")
                 kd_config = KDConfig(
                     temperature=self.config.kd_temperature,
                     alpha=self.config.kd_alpha,
@@ -968,11 +1082,12 @@ class ComprehensiveTrainer:
                     deployed_student_copy.eval()
                 
                 num_classes = len(train_dataset.class_names)
-                teacher_ensemble = TeacherEnsemble(
+                sequential_kd = SequentialTeacherKD(
                     config=kd_config,
                     deployed_student=deployed_student_copy,
                     num_classes=num_classes,
-                    device=device
+                    device=device,
+                    epochs_per_teacher=self.config.epochs_per_teacher
                 )
                 
                 kd_loss_fn = KnowledgeDistillationLoss(
@@ -982,16 +1097,19 @@ class ComprehensiveTrainer:
                     class_weights=class_weights
                 )
                 
-                teacher_count = teacher_ensemble.get_teacher_count()
-                teacher_names = teacher_ensemble.get_teacher_names()
-                logger.info(f"KD enabled with {teacher_count} teachers: {teacher_names}")
+                teacher_count = sequential_kd.get_teacher_count()
+                teacher_names = sequential_kd.get_teacher_names()
+                logger.info(f"Sequential KD: {teacher_count} teachers, {self.config.epochs_per_teacher} epochs each")
+                logger.info(f"Teachers: {teacher_names}")
                 
                 # Store for use in training
-                self._teacher_ensemble = teacher_ensemble
+                self._sequential_kd = sequential_kd
                 self._kd_loss_fn = kd_loss_fn
             except Exception as e:
                 logger.warning(f"Could not initialize KD, falling back to CE loss: {e}")
-                self._teacher_ensemble = None
+                import traceback
+                traceback.print_exc()
+                self._sequential_kd = None
                 self._kd_loss_fn = None
         
         # Optimizer
@@ -1078,16 +1196,12 @@ class ComprehensiveTrainer:
         raw_loss = self.config.ewc_lambda * ewc_loss
         return torch.clamp(raw_loss, max=self.config.max_ewc_loss)
     
-    def _train_epoch(self, model, dataloader, optimizer, criterion, scaler, device, epoch):
-        """Train one epoch with Knowledge Distillation."""
+    def _train_epoch_with_teacher(self, model, dataloader, optimizer, criterion, scaler, device, epoch, teacher, kd_loss_fn):
+        """Train one epoch with a SINGLE teacher for sequential KD."""
         model.train()
         total_loss = 0.0
         correct = 0
         total = 0
-        
-        # Get KD components (initialized in _setup_training)
-        teacher_ensemble = getattr(self, '_teacher_ensemble', None)
-        kd_loss_fn = getattr(self, '_kd_loss_fn', None)
         
         for images, labels, rotation_angles in dataloader:
             images = images.to(device)
@@ -1100,16 +1214,10 @@ class ComprehensiveTrainer:
                     outputs = model(images)
                     logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                     
-                    # Use KD loss if teacher ensemble is available
-                    if teacher_ensemble is not None and kd_loss_fn is not None:
-                        # Get soft labels from all teachers
-                        teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
-                        base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
-                        ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
-                    else:
-                        # Fallback to CE loss
-                        base_loss = criterion(logits, labels)
-                        ce_loss = base_loss
+                    # Get soft labels from SINGLE teacher
+                    teacher_soft_labels = teacher.get_soft_labels(images)
+                    base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                    ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
                     
                     if self.config.use_ewc:
                         ewc_penalty = self._ewc_loss(model)
@@ -1126,16 +1234,67 @@ class ComprehensiveTrainer:
                 outputs = model(images)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                 
-                # Use KD loss if teacher ensemble is available
-                if teacher_ensemble is not None and kd_loss_fn is not None:
-                    # Get soft labels from all teachers
-                    teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
-                    base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
-                    ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                teacher_soft_labels = teacher.get_soft_labels(images)
+                base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                
+                if self.config.use_ewc:
+                    ewc_penalty = self._ewc_loss(model)
+                    loss = base_loss + ewc_penalty
                 else:
-                    # Fallback to CE loss
+                    loss = base_loss
+                
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.gradient_clip_norm)
+                optimizer.step()
+            
+            total_loss += ce_loss.item() if hasattr(ce_loss, 'item') else ce_loss
+            _, predicted = logits.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+        
+        return total_loss / len(dataloader), 100. * correct / total
+    
+    def _train_epoch(self, model, dataloader, optimizer, criterion, scaler, device, epoch):
+        """Train one epoch - Fallback CE loss only (when sequential KD not available)."""
+        model.train()
+        total_loss = 0.0
+        correct = 0
+        total = 0
+        
+        for images, labels, rotation_angles in dataloader:
+            images = images.to(device)
+            labels = labels.to(device)
+            
+            optimizer.zero_grad()
+            
+            if scaler:
+                with autocast('cuda'):
+                    outputs = model(images)
+                    logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                    
+                    # Fallback - CE loss only
                     base_loss = criterion(logits, labels)
                     ce_loss = base_loss
+                    
+                    if self.config.use_ewc:
+                        ewc_penalty = self._ewc_loss(model)
+                        loss = base_loss + ewc_penalty
+                    else:
+                        loss = base_loss
+                
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.gradient_clip_norm)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                outputs = model(images)
+                logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                
+                # Fallback - CE loss only
+                base_loss = criterion(logits, labels)
+                ce_loss = base_loss
                 
                 if self.config.use_ewc:
                     ewc_penalty = self._ewc_loss(model)

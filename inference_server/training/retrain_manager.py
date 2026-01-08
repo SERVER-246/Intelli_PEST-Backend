@@ -68,6 +68,8 @@ class RetrainingConfig:
     kd_beta: float = 0.7   # Soft label (teacher) weight
     teacher_models_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
     use_student_as_teacher: bool = True  # Include deployed student as 12th teacher
+    use_sequential_teachers: bool = True  # Train with ONE teacher at a time (memory efficient)
+    epochs_per_teacher: int = 2  # Epochs to train with each teacher (total = epochs_per_teacher * num_teachers)
     
     # Elastic Weight Consolidation (prevents catastrophic forgetting)
     use_ewc: bool = True
@@ -377,6 +379,9 @@ class ModelRetrainingManager:
         
         # Update image counts from disk
         self._update_image_counts()
+        
+        # Track which images were used in current training (for selective archiving)
+        self._trained_image_paths: set = set()
         
         logger.info(f"ModelRetrainingManager initialized")
         logger.info(f"  Model path: {self.config.model_path}")
@@ -811,6 +816,11 @@ class ModelRetrainingManager:
             if len(dataset) == 0:
                 raise Exception("No feedback images found for training")
             
+            # Store paths of images used in this training run (for selective archiving)
+            # This ensures images submitted DURING training are kept for next batch
+            self._trained_image_paths = set(path for path, _ in dataset.samples)
+            logger.info(f"Tracking {len(self._trained_image_paths)} images for selective archiving")
+            
             # Step 4: Fine-tune model (returns model AND training_metrics)
             logger.info("Step 4: Fine-tuning model (rotation-robust methodology)...")
             model, training_metrics = self._fine_tune_model(model, dataset)
@@ -943,8 +953,8 @@ class ModelRetrainingManager:
     
     def _archive_feedback_images(self):
         """
-        Move trained feedback images to archive folder.
-        This prevents the same images from triggering immediate re-training.
+        Move ONLY trained feedback images to archive folder.
+        Images submitted DURING training are kept for the next training batch.
         Images are moved to: {history_dir}/v{version}/
         """
         version = self._status.current_version
@@ -953,6 +963,7 @@ class ModelRetrainingManager:
         
         images_dir = Path(self.config.feedback_images_dir)
         archived_count = 0
+        skipped_count = 0
         
         # Archive each folder type
         for folder_name in ["correct", "corrected", "junk"]:
@@ -972,24 +983,39 @@ class ModelRetrainingManager:
                         
                         for img_file in class_dir.glob("*"):
                             if img_file.suffix.lower() in ['.jpg', '.jpeg', '.png']:
-                                try:
-                                    shutil.move(str(img_file), str(dst_class_dir / img_file.name))
-                                    archived_count += 1
-                                except Exception as e:
-                                    logger.warning(f"Could not archive {img_file}: {e}")
+                                # ONLY archive if this image was used in training
+                                if str(img_file) in self._trained_image_paths:
+                                    try:
+                                        shutil.move(str(img_file), str(dst_class_dir / img_file.name))
+                                        archived_count += 1
+                                    except Exception as e:
+                                        logger.warning(f"Could not archive {img_file}: {e}")
+                                else:
+                                    # Image arrived during training - keep for next batch
+                                    skipped_count += 1
             else:
                 # Junk folder has images directly
                 for img_file in src_folder.glob("*"):
                     if img_file.suffix.lower() in ['.jpg', '.jpeg', '.png']:
-                        try:
-                            shutil.move(str(img_file), str(dst_folder / img_file.name))
-                            archived_count += 1
-                        except Exception as e:
-                            logger.warning(f"Could not archive {img_file}: {e}")
+                        # ONLY archive if this image was used in training
+                        if str(img_file) in self._trained_image_paths:
+                            try:
+                                shutil.move(str(img_file), str(dst_folder / img_file.name))
+                                archived_count += 1
+                            except Exception as e:
+                                logger.warning(f"Could not archive {img_file}: {e}")
+                        else:
+                            # Image arrived during training - keep for next batch
+                            skipped_count += 1
         
-        logger.info(f"Archived {archived_count} feedback images to {archive_dir}")
+        logger.info(f"Archived {archived_count} trained images to {archive_dir}")
+        if skipped_count > 0:
+            logger.info(f"Kept {skipped_count} new images for next training batch (submitted during training)")
         
-        # Update counts (should now be 0)
+        # Clear the tracked paths
+        self._trained_image_paths.clear()
+        
+        # Update counts
         self._update_image_counts()
     
     def _backup_model(self) -> Optional[Path]:
@@ -1367,16 +1393,18 @@ class ModelRetrainingManager:
                 dataset,
                 batch_size=self.config.batch_size,
                 sampler=sampler,
-                num_workers=0,
-                pin_memory=True if device == 'cuda' else False
+                num_workers=8,
+                pin_memory=True if device == 'cuda' else False,
+                persistent_workers=True
             )
         else:
             train_loader = DataLoader(
                 dataset,
                 batch_size=self.config.batch_size,
                 shuffle=True,
-                num_workers=0,
-                pin_memory=True if device == 'cuda' else False
+                num_workers=8,
+                pin_memory=True if device == 'cuda' else False,
+                persistent_workers=True
             )
         
         # Validation loader (no augmentation, no sampling)
@@ -1391,16 +1419,16 @@ class ModelRetrainingManager:
             include_junk=self.config.include_junk_class,
             transform=val_transform
         )
-        val_loader = DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False, num_workers=0)
+        val_loader = DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False, num_workers=8, persistent_workers=True)
         
         # === STEP 3: Setup Knowledge Distillation (if enabled) ===
-        teacher_ensemble = None
+        sequential_kd = None
         kd_loss_fn = None
         if self.config.use_knowledge_distillation:
             try:
-                from .kd_training import TeacherEnsemble, KDConfig, KnowledgeDistillationLoss
+                from .kd_training import SequentialTeacherKD, KDConfig, KnowledgeDistillationLoss
                 
-                logger.info("Setting up Knowledge Distillation with teacher ensemble...")
+                logger.info("Setting up Sequential Knowledge Distillation (one teacher at a time)...")
                 kd_config = KDConfig(
                     temperature=self.config.kd_temperature,
                     alpha=self.config.kd_alpha,
@@ -1417,7 +1445,7 @@ class ModelRetrainingManager:
                     deployed_student_copy.eval()
                 
                 num_classes = len(self.CLASS_NAMES) + (1 if self.config.include_junk_class else 0)
-                teacher_ensemble = TeacherEnsemble(
+                sequential_kd = SequentialTeacherKD(
                     config=kd_config,
                     deployed_student=deployed_student_copy,
                     num_classes=num_classes,
@@ -1431,15 +1459,19 @@ class ModelRetrainingManager:
                     class_weights=class_weights if self.config.use_class_weights else None
                 )
                 
-                teacher_count = teacher_ensemble.get_teacher_count()
-                teacher_names = teacher_ensemble.get_teacher_names()
-                logger.info(f"KD enabled with {teacher_count} teachers: {teacher_names}")
+                teacher_count = sequential_kd.get_teacher_count()
+                teacher_names = sequential_kd.get_teacher_names()
+                logger.info(f"Sequential KD: {teacher_count} teachers, {self.config.epochs_per_teacher} epochs each")
+                logger.info(f"Teacher order: {teacher_names}")
+                logger.info(f"Total training: {teacher_count * self.config.epochs_per_teacher} epochs")
                 training_metrics['kd_enabled'] = True
                 training_metrics['kd_teacher_count'] = teacher_count
                 training_metrics['kd_teachers'] = teacher_names
             except Exception as e:
                 logger.warning(f"Could not initialize KD, falling back to CE loss: {e}")
-                teacher_ensemble = None
+                import traceback
+                traceback.print_exc()
+                sequential_kd = None
                 kd_loss_fn = None
         
         # === STEP 4: Compute EWC Fisher information ===
@@ -1447,7 +1479,7 @@ class ModelRetrainingManager:
         optimal_params = None
         if self.config.use_ewc and len(dataset) > 0:
             logger.info("Computing Fisher Information for EWC...")
-            fisher_loader = DataLoader(dataset, batch_size=self.config.batch_size, shuffle=True, num_workers=0)
+            fisher_loader = DataLoader(dataset, batch_size=self.config.batch_size, shuffle=True, num_workers=8, persistent_workers=True)
             fisher_info, optimal_params = self._compute_fisher_information(model, fisher_loader, device)
         
         # === STEP 4: Setup optimizer and scheduler ===
@@ -1487,7 +1519,155 @@ class ModelRetrainingManager:
         # Mixed precision
         scaler = GradScaler('cuda') if self.config.use_amp and device == 'cuda' else None
         
-        # === STEP 5: Training loop with dual-metric tracking ===
+        # === STEP 5: Training loop with SEQUENTIAL TEACHERS ===
+        # If sequential KD is enabled, train with one teacher at a time
+        # Otherwise, use the old approach (no KD or fallback)
+        
+        if sequential_kd is not None and kd_loss_fn is not None:
+            # SEQUENTIAL TEACHER TRAINING
+            # Each teacher gets epochs_per_teacher epochs
+            total_teachers = sequential_kd.get_teacher_count()
+            total_epochs = total_teachers * self.config.epochs_per_teacher
+            self._status.total_epochs = total_epochs
+            
+            best_upright_acc = 0.0
+            best_rotation_acc = 0.0
+            best_state = None
+            global_epoch = 0
+            
+            for teacher_name, teacher, phase_num, total_phases in sequential_kd.iterate_teachers():
+                logger.info(f"Training with teacher: {teacher_name} ({phase_num}/{total_phases})")
+                
+                for local_epoch in range(self.config.epochs_per_teacher):
+                    global_epoch += 1
+                    self._status.current_epoch = global_epoch
+                    
+                    # Learning rate with warmup for first teacher only
+                    if phase_num == 1 and local_epoch < self.config.warmup_epochs:
+                        warmup_lr = self.config.learning_rate * (local_epoch + 1) / self.config.warmup_epochs
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = warmup_lr
+                        logger.info(f"  [Warmup] epoch {local_epoch+1}/{self.config.warmup_epochs}, LR: {warmup_lr:.6f}")
+                    
+                    # Progressive unfreezing after warmup
+                    if global_epoch == self.config.freeze_backbone_epochs and frozen_params:
+                        logger.info("Unfreezing backbone layers...")
+                        for name, param in model.named_parameters():
+                            if name in frozen_params:
+                                param.requires_grad = True
+                        optimizer = optim.AdamW(model.parameters(), lr=self.config.learning_rate * 0.1, weight_decay=self.config.weight_decay)
+                    
+                    # Train one epoch with this teacher
+                    model.train()
+                    epoch_loss = 0.0
+                    ewc_loss_total = 0.0
+                    correct = 0
+                    total = 0
+                    
+                    for batch_idx, (images, labels) in enumerate(train_loader):
+                        images = images.to(device)
+                        labels = labels.to(device)
+                        
+                        optimizer.zero_grad()
+                        
+                        if scaler is not None:
+                            with autocast('cuda'):
+                                outputs = model(images)
+                                logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                                
+                                # Get soft labels from SINGLE teacher
+                                teacher_soft_labels = teacher.get_soft_labels(images)
+                                base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                                ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                                
+                                # Add EWC loss
+                                if fisher_info is not None and self.config.use_ewc:
+                                    ewc_penalty = self._ewc_loss(model, fisher_info, optimal_params, self.config.ewc_lambda, self.config.max_ewc_loss)
+                                    loss = base_loss + ewc_penalty
+                                    ewc_loss_total += ewc_penalty.item()
+                                else:
+                                    loss = base_loss
+                            
+                            scaler.scale(loss).backward()
+                            scaler.unscale_(optimizer)
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=self.config.gradient_clip_norm)
+                            scaler.step(optimizer)
+                            scaler.update()
+                        else:
+                            outputs = model(images)
+                            logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                            
+                            teacher_soft_labels = teacher.get_soft_labels(images)
+                            base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                            ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                            
+                            if fisher_info is not None and self.config.use_ewc:
+                                ewc_penalty = self._ewc_loss(model, fisher_info, optimal_params, self.config.ewc_lambda, self.config.max_ewc_loss)
+                                loss = base_loss + ewc_penalty
+                                ewc_loss_total += ewc_penalty.item()
+                            else:
+                                loss = base_loss
+                            
+                            loss.backward()
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=self.config.gradient_clip_norm)
+                            optimizer.step()
+                        
+                        epoch_loss += ce_loss.item() if hasattr(ce_loss, 'item') else ce_loss
+                        _, predicted = logits.max(1)
+                        total += labels.size(0)
+                        correct += predicted.eq(labels).sum().item()
+                    
+                    train_acc = 100.0 * correct / total if total > 0 else 0
+                    avg_loss = epoch_loss / len(train_loader) if len(train_loader) > 0 else 0
+                    avg_ewc = ewc_loss_total / len(train_loader) if len(train_loader) > 0 else 0
+                    
+                    # Validate
+                    upright_acc = self._validate_model(model, val_loader, device)
+                    rotation_acc = self._validate_rotation(model, val_loader, device) if self.config.validate_rotation else upright_acc
+                    
+                    # Track best
+                    if upright_acc > best_upright_acc or rotation_acc > best_rotation_acc:
+                        if upright_acc > best_upright_acc:
+                            best_upright_acc = upright_acc
+                        if rotation_acc > best_rotation_acc:
+                            best_rotation_acc = rotation_acc
+                        best_state = copy.deepcopy(model.state_dict())
+                    
+                    current_lr = optimizer.param_groups[0]['lr']
+                    logger.info(f"[{teacher_name}] Epoch {local_epoch+1}/{self.config.epochs_per_teacher} (Global: {global_epoch}/{total_epochs}) - "
+                               f"Train: {train_acc:.2f}% | Upright: {upright_acc:.2f}% | Rotation: {rotation_acc:.2f}% | EWC: {avg_ewc:.4f}")
+                    
+                    training_metrics['history'].append({
+                        'epoch': global_epoch,
+                        'teacher': teacher_name,
+                        'train_acc': train_acc,
+                        'upright_acc': upright_acc,
+                        'rotation_acc': rotation_acc,
+                        'loss': avg_loss,
+                        'ewc_loss': avg_ewc,
+                        'lr': current_lr
+                    })
+            
+            # Restore best state
+            if best_state is not None:
+                model.load_state_dict(best_state)
+                logger.info(f"Restored best model (upright: {best_upright_acc:.2f}%, rotation: {best_rotation_acc:.2f}%)")
+            
+            training_metrics['epochs_trained'] = global_epoch
+            training_metrics['best_upright_acc'] = best_upright_acc
+            training_metrics['best_rotation_acc'] = best_rotation_acc
+            training_metrics['final_upright_acc'] = upright_acc
+            training_metrics['final_rotation_acc'] = rotation_acc
+            
+            logger.info(f"Sequential KD training complete. Best upright: {best_upright_acc:.2f}%, Best rotation: {best_rotation_acc:.2f}%")
+            
+            for param in model.parameters():
+                param.requires_grad = True
+            model.eval()
+            return model, training_metrics
+        
+        # === FALLBACK: Original training loop (no KD) ===
+        total_epochs = self.config.epochs
         self._status.total_epochs = total_epochs
         best_upright_acc = 0.0
         best_rotation_acc = 0.0
@@ -1545,16 +1725,9 @@ class ModelRetrainingManager:
                         outputs = model(images)
                         logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                         
-                        # Use KD loss if teacher ensemble is available
-                        if teacher_ensemble is not None and kd_loss_fn is not None:
-                            # Get soft labels from all teachers
-                            teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
-                            base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
-                            ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
-                        else:
-                            # Fallback to CE loss
-                            base_loss = criterion(logits, labels)
-                            ce_loss = base_loss
+                        # Fallback loop - no KD, just CE loss
+                        base_loss = criterion(logits, labels)
+                        ce_loss = base_loss
                         
                         # Add EWC loss with clamping
                         if fisher_info is not None and self.config.use_ewc:
@@ -1580,16 +1753,9 @@ class ModelRetrainingManager:
                     outputs = model(images)
                     logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                     
-                    # Use KD loss if teacher ensemble is available
-                    if teacher_ensemble is not None and kd_loss_fn is not None:
-                        # Get soft labels from all teachers
-                        teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
-                        base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
-                        ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
-                    else:
-                        # Fallback to CE loss
-                        base_loss = criterion(logits, labels)
-                        ce_loss = base_loss
+                    # Fallback loop - no KD, just CE loss
+                    base_loss = criterion(logits, labels)
+                    ce_loss = base_loss
                     
                     if fisher_info is not None and self.config.use_ewc:
                         ewc_penalty = self._ewc_loss(

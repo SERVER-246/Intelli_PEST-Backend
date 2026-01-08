@@ -30,6 +30,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -343,32 +344,45 @@ class TeacherEnsemble:
         # Convert to numpy for ONNX inference
         images_np = images.cpu().numpy()
         
-        # Get predictions from all ONNX teachers
-        for name, teacher in self.onnx_teachers.items():
+        # Helper function for parallel ONNX teacher inference
+        def process_onnx_teacher(name_teacher_tuple):
+            name, teacher = name_teacher_tuple
             logits = teacher.predict(images_np)
             if logits is not None:
-                # Convert to tensor and apply temperature-scaled softmax
-                logits_tensor = torch.from_numpy(logits).float().to(device)
-                teacher_classes = logits_tensor.shape[1]
-                
-                # Handle class count mismatch (ONNX teachers have 11, student may have 12 with junk)
-                if teacher_classes < self.num_classes:
-                    # Pad with low logit values for extra classes (junk)
-                    # -10.0 gives very low probability after softmax (~0.00005)
-                    # This means "teachers don't know about junk class"
-                    padding = torch.full(
-                        (batch_size, self.num_classes - teacher_classes),
-                        fill_value=-10.0,
-                        device=device
-                    )
-                    logits_tensor = torch.cat([logits_tensor, padding], dim=1)
-                elif teacher_classes > self.num_classes:
-                    # Truncate if teacher has more classes (shouldn't happen)
-                    logger.warning(f"Teacher {name} has {teacher_classes} classes > student {self.num_classes}, truncating")
-                    logits_tensor = logits_tensor[:, :self.num_classes]
-                
-                soft_probs = F.softmax(logits_tensor / temperature, dim=1)
-                weighted_sum += soft_probs * teacher.weight
+                return (name, logits, teacher.weight)
+            return None
+        
+        # Get predictions from all ONNX teachers IN PARALLEL
+        with ThreadPoolExecutor(max_workers=min(8, len(self.onnx_teachers))) as executor:
+            futures = {executor.submit(process_onnx_teacher, item): item[0] 
+                      for item in self.onnx_teachers.items()}
+            
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    name, logits, weight = result
+                    # Convert to tensor and apply temperature-scaled softmax
+                    logits_tensor = torch.from_numpy(logits).float().to(device)
+                    teacher_classes = logits_tensor.shape[1]
+                    
+                    # Handle class count mismatch (ONNX teachers have 11, student may have 12 with junk)
+                    if teacher_classes < self.num_classes:
+                        # Pad with low logit values for extra classes (junk)
+                        # -10.0 gives very low probability after softmax (~0.00005)
+                        # This means "teachers don't know about junk class"
+                        padding = torch.full(
+                            (batch_size, self.num_classes - teacher_classes),
+                            fill_value=-10.0,
+                            device=device
+                        )
+                        logits_tensor = torch.cat([logits_tensor, padding], dim=1)
+                    elif teacher_classes > self.num_classes:
+                        # Truncate if teacher has more classes (shouldn't happen)
+                        logger.warning(f"Teacher {name} has {teacher_classes} classes > student {self.num_classes}, truncating")
+                        logits_tensor = logits_tensor[:, :self.num_classes]
+                    
+                    soft_probs = F.softmax(logits_tensor / temperature, dim=1)
+                    weighted_sum += soft_probs * weight
         
         # Get prediction from PyTorch teacher (deployed student)
         if self.pytorch_teacher is not None and self.pytorch_teacher.is_loaded():
@@ -592,3 +606,237 @@ def get_teacher_soft_labels(
         Soft labels (B, num_classes)
     """
     return ensemble.get_soft_labels(images, temperature)
+
+
+class SingleTeacher:
+    """
+    Single teacher wrapper for sequential training.
+    Loads ONE teacher at a time to minimize memory usage.
+    """
+    
+    def __init__(
+        self,
+        teacher_name: str,
+        teacher_path: Path,
+        weight: float,
+        num_classes: int,
+        temperature: float,
+        device: str = 'cuda',
+        is_pytorch: bool = False,
+        pytorch_model: Optional[nn.Module] = None
+    ):
+        self.name = teacher_name
+        self.path = teacher_path
+        self.weight = weight
+        self.num_classes = num_classes
+        self.temperature = temperature
+        self.device = device
+        self.is_pytorch = is_pytorch
+        self.teacher = None
+        self.teacher_num_classes = 11  # ONNX teachers have 11 classes
+        
+        if is_pytorch and pytorch_model is not None:
+            self.teacher = PyTorchTeacher(
+                name=teacher_name,
+                model=pytorch_model,
+                weight=weight,
+                device=device
+            )
+            self.teacher_num_classes = self.teacher.num_classes
+        elif not is_pytorch and teacher_path and teacher_path.exists():
+            self.teacher = ONNXTeacher(teacher_name, teacher_path, weight, num_classes)
+        
+        if self.teacher and self.teacher.is_loaded():
+            logger.info(f"  ✓ Loaded teacher: {teacher_name} (weight={weight}, classes={self.teacher_num_classes})")
+        else:
+            logger.warning(f"  ✗ Failed to load teacher: {teacher_name}")
+    
+    def get_soft_labels(self, images: torch.Tensor) -> torch.Tensor:
+        """Get soft labels from this single teacher."""
+        if self.teacher is None or not self.teacher.is_loaded():
+            # Return uniform distribution
+            batch_size = images.size(0)
+            return torch.ones(batch_size, self.num_classes, device=self.device) / self.num_classes
+        
+        batch_size = images.size(0)
+        device = images.device
+        
+        if self.is_pytorch:
+            logits = self.teacher.predict(images)
+        else:
+            images_np = images.cpu().numpy()
+            logits_np = self.teacher.predict(images_np)
+            if logits_np is None:
+                return torch.ones(batch_size, self.num_classes, device=device) / self.num_classes
+            logits = torch.from_numpy(logits_np).float().to(device)
+        
+        if logits is None:
+            return torch.ones(batch_size, self.num_classes, device=device) / self.num_classes
+        
+        # Handle dimension mismatch (teacher 11 classes -> student 12 classes)
+        teacher_classes = logits.shape[1]
+        if teacher_classes < self.num_classes:
+            padding = torch.full(
+                (batch_size, self.num_classes - teacher_classes),
+                fill_value=-10.0,
+                device=device
+            )
+            logits = torch.cat([logits, padding], dim=1)
+        elif teacher_classes > self.num_classes:
+            logits = logits[:, :self.num_classes]
+        
+        # Apply temperature-scaled softmax
+        soft_labels = F.softmax(logits / self.temperature, dim=1)
+        return soft_labels
+    
+    def unload(self):
+        """Unload teacher to free memory."""
+        if self.teacher is not None:
+            if hasattr(self.teacher, 'session'):
+                self.teacher.session = None
+            if hasattr(self.teacher, 'model'):
+                self.teacher.model = None
+            self.teacher = None
+            logger.info(f"  Unloaded teacher: {self.name}")
+
+
+class SequentialTeacherKD:
+    """
+    Sequential Knowledge Distillation - trains with ONE teacher at a time.
+    
+    Workflow:
+    1. Load teacher 1 (e.g., alexnet)
+    2. Train for N epochs with teacher 1
+    3. Unload teacher 1
+    4. Load teacher 2 (e.g., resnet50)
+    5. Train for N epochs with teacher 2
+    6. ... repeat for all teachers
+    
+    Benefits:
+    - Low memory usage (only 1 teacher loaded at a time)
+    - Each teacher gets focused training
+    - More stable gradients
+    """
+    
+    # All available teachers in training order
+    TEACHER_ORDER = [
+        'alexnet',           # Simplest first
+        'mobilenet_v2',
+        'efficientnet_b0',
+        'yolo11n-cls',
+        'resnet50',
+        'darknet53',
+        'inception_v3',
+        'ensemble_attention',
+        'ensemble_concat',
+        'ensemble_cross',
+        'super_ensemble',    # Most complex
+        'deployed_student',  # Current model as teacher (last)
+    ]
+    
+    # Teacher weights (same as before)
+    TEACHER_WEIGHTS = {
+        'mobilenet_v2': 1.0,
+        'resnet50': 1.0,
+        'inception_v3': 1.0,
+        'efficientnet_b0': 1.0,
+        'darknet53': 1.0,
+        'alexnet': 1.0,
+        'yolo11n-cls': 1.0,
+        'ensemble_attention': 1.5,
+        'ensemble_concat': 1.5,
+        'ensemble_cross': 1.5,
+        'super_ensemble': 2.0,
+        'deployed_student': 1.5,
+    }
+    
+    def __init__(
+        self,
+        config: KDConfig,
+        deployed_student: Optional[nn.Module] = None,
+        num_classes: int = 12,
+        device: str = 'cuda',
+        epochs_per_teacher: int = 2
+    ):
+        self.config = config
+        self.num_classes = num_classes
+        self.device = device
+        self.deployed_student = deployed_student
+        self.models_dir = Path(config.teacher_models_dir)
+        self.epochs_per_teacher = epochs_per_teacher
+        
+        # Verify available teachers
+        self.available_teachers = []
+        for name in self.TEACHER_ORDER:
+            if name == 'deployed_student':
+                if deployed_student is not None:
+                    self.available_teachers.append(name)
+            else:
+                path = self.models_dir / f"{name}.onnx"
+                if path.exists():
+                    self.available_teachers.append(name)
+        
+        logger.info(f"Sequential KD initialized with {len(self.available_teachers)} teachers")
+        logger.info(f"Teacher order: {self.available_teachers}")
+        logger.info(f"Student output classes: {num_classes}")
+    
+    def get_teacher_count(self) -> int:
+        return len(self.available_teachers)
+    
+    def get_teacher_names(self) -> List[str]:
+        return self.available_teachers.copy()
+    
+    def load_teacher(self, teacher_name: str) -> SingleTeacher:
+        """Load a single teacher by name."""
+        weight = self.TEACHER_WEIGHTS.get(teacher_name, 1.0)
+        
+        if teacher_name == 'deployed_student':
+            return SingleTeacher(
+                teacher_name=teacher_name,
+                teacher_path=None,
+                weight=weight,
+                num_classes=self.num_classes,
+                temperature=self.config.temperature,
+                device=self.device,
+                is_pytorch=True,
+                pytorch_model=self.deployed_student
+            )
+        else:
+            path = self.models_dir / f"{teacher_name}.onnx"
+            return SingleTeacher(
+                teacher_name=teacher_name,
+                teacher_path=path,
+                weight=weight,
+                num_classes=self.num_classes,
+                temperature=self.config.temperature,
+                device=self.device,
+                is_pytorch=False
+            )
+    
+    def iterate_teachers(self):
+        """
+        Generator that yields teachers one at a time.
+        Automatically loads and unloads each teacher.
+        
+        Usage:
+            for teacher_name, teacher, phase_num, total_phases in seq_kd.iterate_teachers():
+                # Train with this teacher
+                for epoch in range(epochs_per_teacher):
+                    ...
+                # Teacher is automatically unloaded when loop continues
+        """
+        total = len(self.available_teachers)
+        for idx, name in enumerate(self.available_teachers):
+            logger.info(f"\n{'='*60}")
+            logger.info(f"PHASE {idx+1}/{total}: Training with teacher '{name}'")
+            logger.info(f"{'='*60}")
+            
+            teacher = self.load_teacher(name)
+            yield name, teacher, idx + 1, total
+            teacher.unload()
+            
+            # Force garbage collection to free memory
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
