@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "version": 1000000,
+    "timestamp": "2026-01-08T16:08:26.941102",
+    "images_used": 164,
+    "images_per_class": {
+      "Healthy": 11,
+      "Internode borer": 13,
+      "Pink borer": 15,
+      "Rat damage": 11,
+      "Stalk borer": 9,
+      "Top borer": 37,
+      "army worm": 7,
+      "mealy bug": 10,
+      "porcupine damage": 3,
+      "root borer": 4,
+      "termite": 44
+    },
+    "junk_images_used": 0,
+    "epochs": 0,
+    "backup_path": "model_backups\\student_model_rotation_robust_backup_20260108_160817.pt",
+    "success": false,
+    "error": "'ModelRetrainingManager' object has no attribute '_validate_model'",
+    "training_duration_seconds": 9.261819839477539,
+    "final_upright_accuracy": 0,
+    "final_rotation_accuracy": 0,
+    "best_upright_accuracy": 0,
+    "best_rotation_accuracy": 0,
+    "collapse_detected": false,
+    "early_stopped": false
+  }
+]

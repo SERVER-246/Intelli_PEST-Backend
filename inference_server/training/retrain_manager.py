@@ -69,7 +69,7 @@ class RetrainingConfig:
     teacher_models_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
     use_student_as_teacher: bool = True  # Include deployed student as 12th teacher
     use_sequential_teachers: bool = True  # Train with ONE teacher at a time (memory efficient)
-    epochs_per_teacher: int = 2  # Epochs to train with each teacher (total = epochs_per_teacher * num_teachers)
+    epochs_per_teacher: int = 25  # Epochs to train with each teacher (total = epochs_per_teacher * num_teachers)
     
     # Elastic Weight Consolidation (prevents catastrophic forgetting)
     use_ewc: bool = True
@@ -1622,7 +1622,7 @@ class ModelRetrainingManager:
                     avg_ewc = ewc_loss_total / len(train_loader) if len(train_loader) > 0 else 0
                     
                     # Validate
-                    upright_acc = self._validate_model(model, val_loader, device)
+                    _, upright_acc = self._validate_upright(model, val_loader, device, criterion)
                     rotation_acc = self._validate_rotation(model, val_loader, device) if self.config.validate_rotation else upright_acc
                     
                     # Track best

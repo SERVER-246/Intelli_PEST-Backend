@@ -109,7 +109,7 @@ class ComprehensiveTrainingConfig:
     teacher_models_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
     use_student_as_teacher: bool = True  # Include deployed student as 12th teacher
     use_sequential_teachers: bool = True  # Train with ONE teacher at a time
-    epochs_per_teacher: int = 4  # More epochs per teacher for comprehensive training
+    epochs_per_teacher: int = 25  # Epochs per teacher for sequential KD training
     
     # EWC (Elastic Weight Consolidation)
     use_ewc: bool = True
