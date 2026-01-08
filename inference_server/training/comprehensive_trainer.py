@@ -101,6 +101,14 @@ class ComprehensiveTrainingConfig:
     min_learning_rate: float = 1e-6
     weight_decay: float = 0.01
     
+    # Knowledge Distillation parameters
+    use_knowledge_distillation: bool = True  # Use all 11 teachers + deployed model
+    kd_temperature: float = 4.0  # Temperature for soft labels (higher = softer)
+    kd_alpha: float = 0.3  # Hard label (ground truth) weight
+    kd_beta: float = 0.7   # Soft label (teacher) weight
+    teacher_models_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
+    use_student_as_teacher: bool = True  # Include deployed student as 12th teacher
+    
     # EWC (Elastic Weight Consolidation)
     use_ewc: bool = True
     ewc_lambda: float = 100.0
@@ -742,6 +750,12 @@ class ComprehensiveTrainer:
             # Save final model
             self._save_final_model(model)
             
+            # Archive feedback images (CRITICAL - prevents re-triggering)
+            self._archive_feedback_images()
+            
+            # Update version in retrain_manager (MINOR increment)
+            self._update_version_after_comprehensive()
+            
             # Update state
             self._state.is_training = False
             self._state.is_completed = True
@@ -749,7 +763,7 @@ class ComprehensiveTrainer:
             self._save_state()
             
             logger.info("="*60)
-            logger.info("COMPREHENSIVE TRAINING COMPLETED!")
+            logger.info("🚀 COMPREHENSIVE TRAINING COMPLETED!")
             logger.info(f"  Best upright accuracy: {self._state.best_upright_accuracy:.2f}%")
             logger.info(f"  Best rotation accuracy: {self._state.best_rotation_accuracy:.2f}%")
             logger.info(f"  Total images used: {self._state.total_images_used}")
@@ -908,7 +922,7 @@ class ComprehensiveTrainer:
         logger.info(f"Model backed up to {backup_path}")
     
     def _setup_training(self, model, train_dataset, device):
-        """Setup optimizer, scheduler, criterion, and scaler."""
+        """Setup optimizer, scheduler, criterion, scaler, and KD components."""
         # Freeze backbone initially
         if self.config.freeze_backbone_epochs > 0:
             for name, param in model.named_parameters():
@@ -931,6 +945,55 @@ class ComprehensiveTrainer:
             class_weights = torch.tensor(weights, dtype=torch.float32, device=device)
             logger.info(f"Class weights: {dict(zip(train_dataset.class_names, [f'{w:.2f}' for w in weights]))}")
         
+        # Setup Knowledge Distillation (if enabled)
+        teacher_ensemble = None
+        kd_loss_fn = None
+        if self.config.use_knowledge_distillation:
+            try:
+                from .kd_training import TeacherEnsemble, KDConfig, KnowledgeDistillationLoss
+                
+                logger.info("Setting up Knowledge Distillation with teacher ensemble...")
+                kd_config = KDConfig(
+                    temperature=self.config.kd_temperature,
+                    alpha=self.config.kd_alpha,
+                    beta=self.config.kd_beta,
+                    teacher_models_dir=self.config.teacher_models_dir,
+                    use_student_as_teacher=self.config.use_student_as_teacher
+                )
+                
+                # Load deployed student as a teacher (copy current model state)
+                deployed_student_copy = None
+                if self.config.use_student_as_teacher:
+                    deployed_student_copy = copy.deepcopy(model)
+                    deployed_student_copy.eval()
+                
+                num_classes = len(train_dataset.class_names)
+                teacher_ensemble = TeacherEnsemble(
+                    config=kd_config,
+                    deployed_student=deployed_student_copy,
+                    num_classes=num_classes,
+                    device=device
+                )
+                
+                kd_loss_fn = KnowledgeDistillationLoss(
+                    temperature=self.config.kd_temperature,
+                    alpha=self.config.kd_alpha,
+                    beta=self.config.kd_beta,
+                    class_weights=class_weights
+                )
+                
+                teacher_count = teacher_ensemble.get_teacher_count()
+                teacher_names = teacher_ensemble.get_teacher_names()
+                logger.info(f"KD enabled with {teacher_count} teachers: {teacher_names}")
+                
+                # Store for use in training
+                self._teacher_ensemble = teacher_ensemble
+                self._kd_loss_fn = kd_loss_fn
+            except Exception as e:
+                logger.warning(f"Could not initialize KD, falling back to CE loss: {e}")
+                self._teacher_ensemble = None
+                self._kd_loss_fn = None
+        
         # Optimizer
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = optim.AdamW(
@@ -946,7 +1009,7 @@ class ComprehensiveTrainer:
             eta_min=self.config.min_learning_rate
         ) if self.config.use_cosine_schedule else None
         
-        # Criterion
+        # Criterion (fallback CE loss)
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         
         # Scaler
@@ -1016,11 +1079,15 @@ class ComprehensiveTrainer:
         return torch.clamp(raw_loss, max=self.config.max_ewc_loss)
     
     def _train_epoch(self, model, dataloader, optimizer, criterion, scaler, device, epoch):
-        """Train one epoch."""
+        """Train one epoch with Knowledge Distillation."""
         model.train()
         total_loss = 0.0
         correct = 0
         total = 0
+        
+        # Get KD components (initialized in _setup_training)
+        teacher_ensemble = getattr(self, '_teacher_ensemble', None)
+        kd_loss_fn = getattr(self, '_kd_loss_fn', None)
         
         for images, labels, rotation_angles in dataloader:
             images = images.to(device)
@@ -1032,13 +1099,23 @@ class ComprehensiveTrainer:
                 with autocast('cuda'):
                     outputs = model(images)
                     logits = outputs['logits'] if isinstance(outputs, dict) else outputs
-                    ce_loss = criterion(logits, labels)
+                    
+                    # Use KD loss if teacher ensemble is available
+                    if teacher_ensemble is not None and kd_loss_fn is not None:
+                        # Get soft labels from all teachers
+                        teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
+                        base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                        ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                    else:
+                        # Fallback to CE loss
+                        base_loss = criterion(logits, labels)
+                        ce_loss = base_loss
                     
                     if self.config.use_ewc:
                         ewc_penalty = self._ewc_loss(model)
-                        loss = ce_loss + ewc_penalty
+                        loss = base_loss + ewc_penalty
                     else:
-                        loss = ce_loss
+                        loss = base_loss
                 
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -1048,19 +1125,29 @@ class ComprehensiveTrainer:
             else:
                 outputs = model(images)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
-                ce_loss = criterion(logits, labels)
+                
+                # Use KD loss if teacher ensemble is available
+                if teacher_ensemble is not None and kd_loss_fn is not None:
+                    # Get soft labels from all teachers
+                    teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
+                    base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                    ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                else:
+                    # Fallback to CE loss
+                    base_loss = criterion(logits, labels)
+                    ce_loss = base_loss
                 
                 if self.config.use_ewc:
                     ewc_penalty = self._ewc_loss(model)
-                    loss = ce_loss + ewc_penalty
+                    loss = base_loss + ewc_penalty
                 else:
-                    loss = ce_loss
+                    loss = base_loss
                 
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.gradient_clip_norm)
                 optimizer.step()
             
-            total_loss += ce_loss.item()
+            total_loss += ce_loss.item() if hasattr(ce_loss, 'item') else ce_loss
             _, predicted = logits.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
@@ -1135,9 +1222,62 @@ class ComprehensiveTrainer:
         
         return sum(accuracies) / len(accuracies)
     
+    def _get_current_version(self) -> tuple:
+        """Get current version from retrain_manager."""
+        try:
+            from .retrain_manager import get_retrain_manager
+            manager = get_retrain_manager()
+            status = manager.get_status()
+            return (
+                status.version_major,
+                status.version_minor,
+                status.version_patch
+            )
+        except Exception as e:
+            logger.warning(f"Could not get current version: {e}")
+            return (1, 0, 0)
+    
+    def _update_version_after_comprehensive(self):
+        """
+        Update version in retrain_manager after comprehensive training.
+        Increments MINOR version and resets PATCH to 0.
+        """
+        try:
+            from .retrain_manager import get_retrain_manager
+            manager = get_retrain_manager()
+            
+            # Get current and calculate new version
+            with manager._lock:
+                old_version = manager._status.current_version_string
+                manager._status.version_minor += 1  # Increment MINOR
+                manager._status.version_patch = 0    # Reset PATCH
+                manager._status.total_comprehensive += 1
+                new_version = manager._status.current_version_string
+            
+            # Save the updated status
+            manager._save_status()
+            
+            # Copy model with new version name
+            model_path = Path(self.config.model_path)
+            versioned_name = f"student_model_{new_version}.pt"
+            versioned_path = model_path.parent / versioned_name
+            
+            if model_path.exists():
+                shutil.copy2(model_path, versioned_path)
+                logger.info(f"📦 Versioned model saved: {versioned_path}")
+            
+            logger.info(f"🚀 Version updated: {old_version} → {new_version} (comprehensive training)")
+            
+        except Exception as e:
+            logger.error(f"Could not update version after comprehensive training: {e}")
+    
     def _save_final_model(self, model):
         """Save the final trained model."""
         model_path = Path(self.config.model_path)
+        
+        # Get version info
+        major, minor, patch = self._get_current_version()
+        new_version = f"v{major}.{minor + 1}.0"  # Comprehensive increments MINOR, resets PATCH
         
         checkpoint = {
             'model_state_dict': model.state_dict(),
@@ -1148,10 +1288,64 @@ class ComprehensiveTrainer:
             'best_rotation_accuracy': self._state.best_rotation_accuracy,
             'total_images_used': self._state.total_images_used,
             'training_version': self._state.training_version,
+            # Semantic version
+            'model_version': new_version,
+            'version_major': major,
+            'version_minor': minor + 1,
+            'version_patch': 0,
+            'training_type': 'comprehensive',
         }
         
         torch.save(checkpoint, model_path)
-        logger.info(f"Final model saved to {model_path}")
+        logger.info(f"Final model saved to {model_path} (version {new_version})")
+
+    def _archive_feedback_images(self):
+        """
+        Move trained feedback images to archive folder.
+        This prevents the same images from triggering immediate re-training.
+        Images are moved to: {history_dir}/v{version}_comprehensive/
+        """
+        version = self._state.training_version or "1"
+        archive_dir = Path(self.config.archived_images_dir) / f"v{version}_comprehensive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        
+        images_dir = Path(self.config.feedback_images_dir)
+        archived_count = 0
+        
+        # Archive each folder type
+        for folder_name in ["correct", "corrected", "junk"]:
+            src_folder = images_dir / folder_name
+            if not src_folder.exists():
+                continue
+            
+            dst_folder = archive_dir / folder_name
+            dst_folder.mkdir(parents=True, exist_ok=True)
+            
+            # Move class subfolders for correct/corrected
+            if folder_name in ["correct", "corrected"]:
+                for class_dir in src_folder.iterdir():
+                    if class_dir.is_dir():
+                        dst_class_dir = dst_folder / class_dir.name
+                        dst_class_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        for img_file in class_dir.glob("*"):
+                            if img_file.suffix.lower() in ['.jpg', '.jpeg', '.png']:
+                                try:
+                                    shutil.move(str(img_file), str(dst_class_dir / img_file.name))
+                                    archived_count += 1
+                                except Exception as e:
+                                    logger.warning(f"Could not archive {img_file}: {e}")
+            else:
+                # Junk folder has images directly
+                for img_file in src_folder.glob("*"):
+                    if img_file.suffix.lower() in ['.jpg', '.jpeg', '.png']:
+                        try:
+                            shutil.move(str(img_file), str(dst_folder / img_file.name))
+                            archived_count += 1
+                        except Exception as e:
+                            logger.warning(f"Could not archive {img_file}: {e}")
+        
+        logger.info(f"📦 Archived {archived_count} feedback images to {archive_dir}")
 
 
 # ============================================================

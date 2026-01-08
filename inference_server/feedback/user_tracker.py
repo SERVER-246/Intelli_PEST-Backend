@@ -1,7 +1,11 @@
 """
 User Tracker
 ============
-Tracks user behavior and detects suspicious activity.
+Tracks user behavior and statistics.
+
+NOTE: Automatic flagging has been DISABLED as all users are trusted experts
+helping improve model generalization in the field. The flagging logic is kept
+but disabled via FLAGGING_ENABLED = False for potential future use.
 """
 
 import json
@@ -16,6 +20,9 @@ from typing import Dict, List, Optional, Any, Set
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
+
+# IMPORTANT: Flagging disabled - users are trusted experts
+FLAGGING_ENABLED = False
 
 
 @dataclass
@@ -80,9 +87,13 @@ class SubmissionRecord:
 
 class UserTracker:
     """
-    Tracks users and detects suspicious behavior.
+    Tracks users and their contributions.
     
-    Suspicious behaviors:
+    NOTE: Automatic flagging has been DISABLED.
+    All users are treated as trusted experts helping improve model generalization.
+    The flagging thresholds are kept for reference but not enforced.
+    
+    Original suspicious behaviors (NOW DISABLED):
     - High correction rate (>70%)
     - Same image with different "correct" classes
     - Rapid submissions (>10/min)
@@ -90,7 +101,7 @@ class UserTracker:
     - Impossible location changes
     """
     
-    # Thresholds
+    # Thresholds (kept for reference, NOT ENFORCED when FLAGGING_ENABLED = False)
     CORRECTION_RATE_THRESHOLD = 0.70  # Flag if >70% corrections
     RAPID_SUBMISSION_THRESHOLD = 10   # Max submissions per minute
     SAME_IMAGE_DIFF_CLASS_THRESHOLD = 3  # Flag after 3 different classes for same image
@@ -99,11 +110,14 @@ class UserTracker:
     
     # Trust score adjustments
     CORRECT_FEEDBACK_BONUS = 1.0
-    CORRECTION_PENALTY = 2.0  # Only applied if correction rate > 50%
-    RAPID_SUBMISSION_PENALTY = 20.0
-    DUPLICATE_DIFF_CLASS_PENALTY = 30.0
+    CORRECTION_PENALTY = 0.0  # DISABLED - corrections from experts are valuable
+    RAPID_SUBMISSION_PENALTY = 0.0  # DISABLED - experts may submit rapidly
+    DUPLICATE_DIFF_CLASS_PENALTY = 0.0  # DISABLED - experts may reconsider
     
-    def __init__(self, data_dir: str = "./feedback_data/users"):
+    # Database integration
+    _database = None
+    
+    def __init__(self, data_dir: str = "./feedback_data/users", use_database: bool = True):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
@@ -112,10 +126,28 @@ class UserTracker:
         self._image_corrections: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
         self._lock = threading.Lock()
         
-        # Load existing data
+        # Initialize database if enabled
+        self._use_database = use_database
+        if use_database:
+            try:
+                from .database import init_database_manager, get_database_manager
+                self._database = get_database_manager()
+                if self._database is None:
+                    db_path = self.data_dir.parent / "intellipest.db"
+                    self._database = init_database_manager(str(db_path))
+                logger.info("UserTracker using database backend")
+            except Exception as e:
+                logger.warning(f"Database init failed, falling back to JSON: {e}")
+                self._use_database = False
+        
+        # Load existing data from JSON (for backwards compatibility)
         self._load_users()
         
-        logger.info(f"UserTracker initialized. {len(self._users)} users loaded.")
+        # Migrate to database if available
+        if self._use_database and self._database:
+            self._migrate_to_database()
+        
+        logger.info(f"UserTracker initialized. {len(self._users)} users loaded. Flagging: {'ENABLED' if FLAGGING_ENABLED else 'DISABLED'}")
     
     def get_or_create_user(
         self,
@@ -189,7 +221,8 @@ class UserTracker:
             # Count submissions in last minute
             submissions_last_minute = sum(1 for r in recent if now - r.timestamp < 60)
             
-            if submissions_last_minute > self.RAPID_SUBMISSION_THRESHOLD:
+            # NOTE: Rapid submission flagging DISABLED - users are trusted experts
+            if FLAGGING_ENABLED and submissions_last_minute > self.RAPID_SUBMISSION_THRESHOLD:
                 user.rapid_submission_count += 1
                 user.trust_score = max(0, user.trust_score - self.RAPID_SUBMISSION_PENALTY)
                 
@@ -198,10 +231,11 @@ class UserTracker:
             
             self._save_user(user)
         
+        # All users are trusted (flagging disabled)
         return {
             "trust_score": user.trust_score,
-            "is_trusted": not user.is_flagged and user.trust_score > 20,
-            "is_flagged": user.is_flagged,
+            "is_trusted": True,  # Always trusted - users are experts
+            "is_flagged": False,  # Never flagged - flagging disabled
         }
     
     def record_feedback(
@@ -236,10 +270,11 @@ class UserTracker:
                     user.corrections_by_class[correct_class] = \
                         user.corrections_by_class.get(correct_class, 0) + 1
                     
-                    # Track same image with different "correct" classes
+                    # Track same image with different "correct" classes (for statistics only)
                     self._image_corrections[user_id][image_hash].add(correct_class)
                     
-                    if len(self._image_corrections[user_id][image_hash]) >= self.SAME_IMAGE_DIFF_CLASS_THRESHOLD:
+                    # NOTE: All flagging logic below is DISABLED - users are trusted experts
+                    if FLAGGING_ENABLED and len(self._image_corrections[user_id][image_hash]) >= self.SAME_IMAGE_DIFF_CLASS_THRESHOLD:
                         user.same_image_different_classes += 1
                         user.trust_score = max(0, user.trust_score - self.DUPLICATE_DIFF_CLASS_PENALTY)
                         warnings.append("Same image corrected to multiple different classes")
@@ -247,19 +282,19 @@ class UserTracker:
                         if not user.is_flagged:
                             self._flag_user(user, "Same image submitted with multiple different corrections")
                 
-                # Apply penalty if correction rate is suspicious
-                if user.correction_rate > 0.5 and user.total_feedbacks >= self.MIN_FEEDBACKS_FOR_FLAG:
+                # NOTE: Penalty DISABLED - corrections from experts are valuable
+                if FLAGGING_ENABLED and user.correction_rate > 0.5 and user.total_feedbacks >= self.MIN_FEEDBACKS_FOR_FLAG:
                     user.trust_score = max(0, user.trust_score - self.CORRECTION_PENALTY)
             
-            # Check for high correction rate
-            if (user.total_feedbacks >= self.MIN_FEEDBACKS_FOR_FLAG and 
+            # NOTE: High correction rate flagging DISABLED - experts may have high correction rates
+            if FLAGGING_ENABLED and (user.total_feedbacks >= self.MIN_FEEDBACKS_FOR_FLAG and 
                 user.correction_rate > self.CORRECTION_RATE_THRESHOLD and
                 not user.is_flagged):
                 self._flag_user(user, f"High correction rate: {user.correction_rate:.1%}")
                 warnings.append(f"High correction rate detected: {user.correction_rate:.1%}")
             
-            # Check for always correcting to same class
-            if user.correction_feedbacks >= self.MIN_FEEDBACKS_FOR_FLAG:
+            # NOTE: Single class correction flagging DISABLED - experts may specialize
+            if FLAGGING_ENABLED and user.correction_feedbacks >= self.MIN_FEEDBACKS_FOR_FLAG:
                 max_class_corrections = max(user.corrections_by_class.values()) if user.corrections_by_class else 0
                 if max_class_corrections / user.correction_feedbacks > self.SINGLE_CLASS_CORRECTION_THRESHOLD:
                     if not user.is_flagged:
@@ -269,15 +304,19 @@ class UserTracker:
             
             self._save_user(user)
         
+        # All users are trusted (flagging disabled)
         return {
             "trust_score": user.trust_score,
-            "is_trusted": not user.is_flagged and user.trust_score > 20,
-            "is_flagged": user.is_flagged,
-            "warnings": warnings,
+            "is_trusted": True,  # Always trusted - users are experts
+            "is_flagged": False,  # Never flagged - flagging disabled
+            "warnings": warnings,  # Still track patterns for analytics
         }
     
     def _flag_user(self, user: UserStats, reason: str):
-        """Flag a user as suspicious."""
+        """Flag a user as suspicious. NOTE: Only called when FLAGGING_ENABLED=True"""
+        if not FLAGGING_ENABLED:
+            logger.debug(f"Flagging disabled - would have flagged {user.user_id}: {reason}")
+            return
         user.is_flagged = True
         user.flag_reason = reason
         user.flag_timestamp = datetime.utcnow().isoformat() + "Z"
@@ -291,7 +330,7 @@ class UserTracker:
                 user = self._users[user_id]
                 user.is_flagged = False
                 user.flag_reason = f"Unflagged by admin: {admin_note}" if admin_note else None
-                user.trust_score = 50.0  # Reset to neutral
+                user.trust_score = 100.0  # Reset to full trust (experts)
                 self._save_user(user)
                 logger.info(f"User unflagged by admin: {user_id}")
                 return True
@@ -310,17 +349,41 @@ class UserTracker:
             return [u.to_dict() for u in self._users.values()]
     
     def get_flagged_users(self) -> List[Dict[str, Any]]:
-        """Get all flagged users."""
+        """Get all flagged users. NOTE: With flagging disabled, this returns empty list."""
         with self._lock:
             return [u.to_dict() for u in self._users.values() if u.is_flagged]
     
     def is_user_trusted(self, user_id: str) -> bool:
-        """Check if user is trusted."""
+        """Check if user is trusted. NOTE: All users are trusted (flagging disabled)."""
+        return True  # All users are trusted experts
+    
+    def unflag_all_users(self, admin_note: str = "Disabled flagging - all users are trusted experts") -> int:
+        """Unflag all users at once. Called when disabling flagging system."""
+        count = 0
         with self._lock:
-            if user_id in self._users:
-                user = self._users[user_id]
-                return not user.is_flagged and user.trust_score > 20
-        return True  # New users are trusted by default
+            for user in self._users.values():
+                if user.is_flagged:
+                    user.is_flagged = False
+                    user.flag_reason = f"Unflagged: {admin_note}"
+                    user.trust_score = 100.0  # Reset to full trust
+                    self._save_user(user)
+                    count += 1
+        logger.info(f"Unflagged {count} users: {admin_note}")
+        return count
+    
+    def _migrate_to_database(self):
+        """Migrate user data to database if available."""
+        if not self._database:
+            return
+        
+        try:
+            migrated = self._database.migrate_from_json(
+                str(self.data_dir),
+                str(self.data_dir.parent / "metadata")
+            )
+            logger.info(f"Migrated to database: {migrated}")
+        except Exception as e:
+            logger.warning(f"Database migration failed: {e}")
     
     def _save_user(self, user: UserStats):
         """Save user data to file."""

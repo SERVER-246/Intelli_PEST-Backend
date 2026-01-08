@@ -51,6 +51,8 @@ if __name__ == "__main__":
     from inference_server.fastapi_app.dependencies import set_api_key_manager
     from inference_server.security import APIKeyManager
     from inference_server.feedback import init_feedback_manager, init_user_tracker, init_data_collector
+    from inference_server.feedback.database import init_database_manager
+    from inference_server.training import get_retrain_manager
     
     print("=" * 60)
     print("SUGARCANE PEST DETECTION INFERENCE SERVER")
@@ -68,6 +70,15 @@ if __name__ == "__main__":
     
     # Initialize feedback and tracking systems
     feedback_dir = os.path.join(os.path.dirname(__file__), "feedback_data")
+    
+    # Initialize SQLite database (MUST BE FIRST)
+    db_path = os.path.join(feedback_dir, "intellipest.db")
+    db_manager = init_database_manager(db_path=db_path)
+    print(f"Database: {db_path}")
+    
+    # Log server start
+    db_manager.log_system_event("server_start", "main", "Inference server starting",
+                                event_data={"model_path": MODEL_PATH, "api_key": DEFAULT_API_KEY[:20] + "..."})
     
     # Initialize user tracker
     user_tracker = init_user_tracker(
@@ -90,6 +101,21 @@ if __name__ == "__main__":
         class_names=CLASS_NAMES,
     )
     print(f"Feedback system: {feedback_dir}")
+    
+    # Initialize retraining manager with auto-scheduler
+    print("Initializing retraining system...")
+    retrain_manager = get_retrain_manager(
+        model_path=MODEL_PATH,
+        feedback_dir=os.path.join(feedback_dir, "images"),
+    )
+    
+    # Start the auto-retraining scheduler (checks every 5 minutes)
+    retrain_manager.start_auto_scheduler(check_interval_minutes=5)
+    print(f"Retraining scheduler: ACTIVE (checks every 5 min)")
+    print(f"  Thresholds: {retrain_manager.config.min_images_per_class}/class or {retrain_manager.config.min_total_images} total")
+    status = retrain_manager.get_status()
+    print(f"  Current feedback images: {status.total_feedback_images}")
+    print(f"  Ready to retrain: {status.ready_to_retrain}")
     
     print("")
     print("=" * 60)

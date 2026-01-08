@@ -60,7 +60,14 @@ class RetrainingConfig:
     learning_rate: float = 5e-4  # 0.0005 - same as rotation finetuning
     min_learning_rate: float = 1e-6
     weight_decay: float = 0.01  # Matching original training
-    temperature: float = 4.0  # For soft label consistency
+    
+    # Knowledge Distillation parameters
+    use_knowledge_distillation: bool = True  # Use all 11 teachers + deployed model
+    kd_temperature: float = 4.0  # Temperature for soft labels (higher = softer)
+    kd_alpha: float = 0.3  # Hard label (ground truth) weight
+    kd_beta: float = 0.7   # Soft label (teacher) weight
+    teacher_models_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
+    use_student_as_teacher: bool = True  # Include deployed student as 12th teacher
     
     # Elastic Weight Consolidation (prevents catastrophic forgetting)
     use_ewc: bool = True
@@ -139,9 +146,12 @@ class RetrainingStatus:
     total_epochs: int = 0
     error: Optional[str] = None
     
-    # Version tracking
-    current_version: int = 1  # Model version (increments with each retrain)
-    total_retrains: int = 0  # Total number of retraining runs
+    # Semantic Version tracking (v{MAJOR}.{MINOR}.{PATCH})
+    version_major: int = 1
+    version_minor: int = 0
+    version_patch: int = 0
+    total_fine_tunes: int = 0  # Total fine-tuning runs
+    total_comprehensive: int = 0  # Total comprehensive training runs
     
     # Image counts (NEW images since last retrain)
     total_feedback_images: int = 0
@@ -153,8 +163,25 @@ class RetrainingStatus:
     threshold_total: int = 150
     threshold_min_classes: int = 3  # Minimum classes with images to prevent bias
     
+    @property
+    def current_version_string(self) -> str:
+        """Get current version as string (e.g., 'v1.2.3')."""
+        return f"v{self.version_major}.{self.version_minor}.{self.version_patch}"
+    
+    @property
+    def current_version(self) -> int:
+        """Get current version as a single integer (for backward compatibility).
+        
+        Calculated as: MAJOR*1000000 + MINOR*1000 + PATCH
+        E.g., v1.2.3 = 1002003
+        """
+        return self.version_major * 1000000 + self.version_minor * 1000 + self.version_patch
+    
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["current_version_string"] = self.current_version_string
+        data["current_version"] = self.current_version
+        return data
     
     @property
     def classes_with_images(self) -> int:
@@ -354,7 +381,7 @@ class ModelRetrainingManager:
         logger.info(f"ModelRetrainingManager initialized")
         logger.info(f"  Model path: {self.config.model_path}")
         logger.info(f"  Feedback dir: {self.config.feedback_images_dir}")
-        logger.info(f"  Version: {self._status.current_version}, Total retrains: {self._status.total_retrains}")
+        logger.info(f"  Version: {self._status.current_version_string}, Fine-tunes: {self._status.total_fine_tunes}, Comprehensive: {self._status.total_comprehensive}")
         logger.info(f"  Thresholds: {self.config.min_images_per_class}/class or {self.config.min_total_images} total, min {self.config.min_classes_with_images} classes")
     
     def _load_status(self):
@@ -365,10 +392,14 @@ class ModelRetrainingManager:
                     data = json.load(f)
                     self._status.last_trained = data.get('last_trained')
                     self._status.last_backup_path = data.get('last_backup_path')
-                    self._status.current_version = data.get('current_version', 1)
-                    self._status.total_retrains = data.get('total_retrains', 0)
-                    logger.info(f"Loaded persisted status: version={self._status.current_version}, "
-                               f"retrains={self._status.total_retrains}, last_trained={self._status.last_trained}")
+                    # Load semantic version
+                    self._status.version_major = data.get('version_major', 1)
+                    self._status.version_minor = data.get('version_minor', 0)
+                    self._status.version_patch = data.get('version_patch', 0)
+                    self._status.total_fine_tunes = data.get('total_fine_tunes', 0)
+                    self._status.total_comprehensive = data.get('total_comprehensive', 0)
+                    logger.info(f"Loaded persisted status: version={self._status.current_version_string}, "
+                               f"fine-tunes={self._status.total_fine_tunes}, comprehensive={self._status.total_comprehensive}")
         except Exception as e:
             logger.warning(f"Could not load status file: {e}")
     
@@ -378,8 +409,12 @@ class ModelRetrainingManager:
             data = {
                 'last_trained': self._status.last_trained,
                 'last_backup_path': self._status.last_backup_path,
-                'current_version': self._status.current_version,
-                'total_retrains': self._status.total_retrains,
+                'version_major': self._status.version_major,
+                'version_minor': self._status.version_minor,
+                'version_patch': self._status.version_patch,
+                'current_version_string': self._status.current_version_string,
+                'total_fine_tunes': self._status.total_fine_tunes,
+                'total_comprehensive': self._status.total_comprehensive,
                 'updated_at': datetime.now().isoformat(),
             }
             with open(self._status_file, 'w') as f:
@@ -462,6 +497,155 @@ class ModelRetrainingManager:
         """Get current retraining status."""
         self._update_image_counts()
         return self._status
+    
+    # ==================== Auto-Scheduler ====================
+    
+    def start_auto_scheduler(self, check_interval_minutes: int = 5):
+        """
+        Start a background scheduler that periodically checks if retraining should trigger.
+        
+        Args:
+            check_interval_minutes: How often to check thresholds (default: 5 min)
+        """
+        if hasattr(self, '_scheduler_thread') and self._scheduler_thread and self._scheduler_thread.is_alive():
+            logger.info("Auto-scheduler already running")
+            return
+        
+        self._scheduler_running = True
+        self._scheduler_interval = check_interval_minutes * 60  # Convert to seconds
+        
+        # Log system event
+        self._log_system_event("scheduler_start", "auto_scheduler", 
+                              f"Auto-scheduler started (interval: {check_interval_minutes} min)")
+        
+        def scheduler_loop():
+            logger.info(f"🔄 Auto-retraining scheduler started (checking every {check_interval_minutes} min)")
+            
+            # Initial check on startup
+            import time
+            time.sleep(10)  # Wait 10 seconds for server to fully start
+            
+            while self._scheduler_running:
+                try:
+                    # Check and trigger retraining if thresholds met
+                    self._update_image_counts()
+                    
+                    # Get historical count for comprehensive threshold
+                    total_historical = self.get_total_historical_feedback_count()
+                    comprehensive_threshold_met = total_historical >= 1000
+                    
+                    # Log the scheduler check
+                    training_triggered = False
+                    training_type = None
+                    reason = None
+                    
+                    if self._status.ready_to_retrain and not self._status.is_training:
+                        logger.info("🚀 Auto-scheduler: Thresholds met! Triggering retraining...")
+                        if comprehensive_threshold_met:
+                            training_type = "comprehensive"
+                        else:
+                            training_type = "fine_tuning"
+                        training_triggered = self.check_and_trigger_retraining()
+                    else:
+                        if self._status.is_training:
+                            reason = "Training already in progress"
+                            logger.debug("Auto-scheduler: Training already in progress")
+                        else:
+                            reason = self._status.retrain_blocked_reason
+                            logger.debug(f"Auto-scheduler: Not ready - {reason}")
+                    
+                    # Log to database
+                    self._log_scheduler_check(
+                        total_feedback_images=self._status.total_feedback_images,
+                        images_per_class=self._status.images_per_class,
+                        classes_with_images=self._status.classes_with_images,
+                        threshold_met=self._status.ready_to_retrain,
+                        comprehensive_threshold_met=comprehensive_threshold_met,
+                        training_triggered=training_triggered,
+                        training_type=training_type,
+                        reason=reason,
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Auto-scheduler error: {e}")
+                    self._log_system_event("scheduler_error", "auto_scheduler", 
+                                          str(e), severity="error")
+                
+                # Wait for next check
+                for _ in range(self._scheduler_interval):
+                    if not self._scheduler_running:
+                        break
+                    time.sleep(1)
+            
+            self._log_system_event("scheduler_stop", "auto_scheduler", "Auto-scheduler stopped")
+            logger.info("Auto-retraining scheduler stopped")
+        
+        self._scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
+        self._scheduler_thread.start()
+        logger.info(f"Auto-retraining scheduler started (interval: {check_interval_minutes} min)")
+    
+    def _log_system_event(self, event_type: str, component: str, message: str, severity: str = "info"):
+        """Log a system event to database."""
+        try:
+            from ..feedback.database import get_database_manager
+            db = get_database_manager()
+            if db:
+                db.log_system_event(event_type, component, message, severity)
+        except Exception as e:
+            logger.debug(f"Could not log system event: {e}")
+    
+    def _log_scheduler_check(self, **kwargs):
+        """Log a scheduler check to database."""
+        try:
+            from ..feedback.database import get_database_manager
+            db = get_database_manager()
+            if db:
+                db.log_scheduler_check(**kwargs)
+        except Exception as e:
+            logger.debug(f"Could not log scheduler check: {e}")
+    
+    def _create_training_run_db(self, **kwargs):
+        """Create a training run record in database."""
+        try:
+            from ..feedback.database import get_database_manager
+            db = get_database_manager()
+            if db:
+                db.create_training_run(**kwargs)
+                logger.info(f"Created training run in database: {kwargs.get('run_id')}")
+        except Exception as e:
+            logger.warning(f"Could not create training run in database: {e}")
+    
+    def _update_training_run_db(self, run_id: str, **kwargs):
+        """Update a training run record in database."""
+        try:
+            from ..feedback.database import get_database_manager
+            db = get_database_manager()
+            if db:
+                db.update_training_run(run_id, **kwargs)
+                logger.debug(f"Updated training run {run_id}: {kwargs.get('status', 'update')}")
+        except Exception as e:
+            logger.warning(f"Could not update training run in database: {e}")
+    
+    def _log_training_event_db(self, run_id: str, event_type: str, message: str, **kwargs):
+        """Log a training event to database."""
+        try:
+            from ..feedback.database import get_database_manager
+            db = get_database_manager()
+            if db:
+                db.log_training_event(run_id, event_type, message, **kwargs)
+        except Exception as e:
+            logger.warning(f"Could not log training event to database: {e}")
+    
+    def stop_auto_scheduler(self):
+        """Stop the auto-retraining scheduler."""
+        self._scheduler_running = False
+        logger.info("Auto-retraining scheduler stopping...")
+    
+    def is_scheduler_running(self) -> bool:
+        """Check if auto-scheduler is running."""
+        return hasattr(self, '_scheduler_thread') and self._scheduler_thread and self._scheduler_thread.is_alive()
+    
+    # ==================== Historical Feedback ====================
     
     def get_total_historical_feedback_count(self) -> int:
         """
@@ -577,7 +761,11 @@ class ModelRetrainingManager:
     def _run_retraining(self):
         """Run the actual retraining process (in background thread)."""
         import time
+        import uuid
         start_time = time.time()
+        
+        # Generate unique run ID for database tracking
+        run_id = f"ft_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         
         # Snapshot current image counts for history
         images_used = self._status.total_feedback_images
@@ -586,9 +774,27 @@ class ModelRetrainingManager:
         
         backup_path = None
         training_metrics = {}
+        
+        # Create training run in database
+        # Use patch number for model_version (simpler integer)
+        next_patch = self._status.version_patch + 1
+        next_version_string = f"v{self._status.version_major}.{self._status.version_minor}.{next_patch}"
+        self._create_training_run_db(
+            run_id=run_id,
+            training_type="fine_tuning",
+            model_version=next_patch,
+            model_version_string=next_version_string,
+            epochs_planned=self.config.epochs,
+            total_images=images_used,
+            images_per_class=images_per_class_used,
+            junk_images=junk_images_used,
+            kd_enabled=self.config.use_knowledge_distillation,
+        )
+        
         try:
             # Step 1: Backup current model
             logger.info("Step 1: Backing up current model...")
+            self._log_training_event_db(run_id, "step_start", "Backing up current model", epoch=0)
             backup_path = self._backup_model()
             if backup_path:
                 self._status.last_backup_path = str(backup_path)
@@ -624,20 +830,23 @@ class ModelRetrainingManager:
             # Calculate training duration
             training_duration = time.time() - start_time
             
-            # Update version and counts
+            # Update version (PATCH increment for fine-tuning)
             with self._lock:
                 self._status.is_training = False
                 self._status.last_trained = datetime.now().isoformat()
                 self._status.training_progress = 1.0
-                self._status.current_version += 1  # Increment version
-                self._status.total_retrains += 1
+                self._status.version_patch += 1  # Increment PATCH version
+                self._status.total_fine_tunes += 1
             
             # Save status to disk for persistence
             self._save_status()
             
+            # Rename model with version number
+            versioned_model_path = self._rename_model_with_version(training_metrics)
+            
             # Record in training history (with dual metrics)
             history_entry = RetrainingHistory(
-                version=self._status.current_version,
+                version=self._status.current_version_string,
                 timestamp=self._status.last_trained,
                 images_used=images_used,
                 images_per_class=images_per_class_used,
@@ -655,10 +864,30 @@ class ModelRetrainingManager:
             )
             self._save_training_history(history_entry)
             
-            logger.info(f"Retraining completed successfully! Model is now version {self._status.current_version}")
+            logger.info(f"✅ Fine-tuning completed! Model is now {self._status.current_version_string}")
             logger.info(f"  Best upright: {training_metrics.get('best_upright_acc', 0):.2f}%")
             logger.info(f"  Best rotation: {training_metrics.get('best_rotation_acc', 0):.2f}%")
-            logger.info(f"  Total retrains: {self._status.total_retrains}, Duration: {training_duration:.1f}s")
+            logger.info(f"  Model saved: {versioned_model_path}")
+            logger.info(f"  Total fine-tunes: {self._status.total_fine_tunes}, Duration: {training_duration:.1f}s")
+            if training_metrics.get('kd_enabled'):
+                logger.info(f"  KD Teachers used: {training_metrics.get('kd_teacher_count', 0)}")
+            
+            # Update training run in database
+            self._update_training_run_db(
+                run_id=run_id,
+                status="completed",
+                epochs_completed=training_metrics.get('epochs_trained', self.config.epochs),
+                final_upright_accuracy=training_metrics.get('final_upright_acc', 0),
+                final_rotation_accuracy=training_metrics.get('final_rotation_acc', 0),
+                best_upright_accuracy=training_metrics.get('best_upright_acc', 0),
+                best_rotation_accuracy=training_metrics.get('best_rotation_acc', 0),
+                early_stopped=training_metrics.get('early_stopped', False),
+                collapse_detected=training_metrics.get('collapse_detected', False),
+                training_duration_seconds=training_duration,
+                backup_path=str(backup_path) if backup_path else None,
+                kd_teacher_count=training_metrics.get('kd_teacher_count'),
+                kd_teachers=training_metrics.get('kd_teachers'),
+            )
             
             # Callback
             if self._on_retrain_complete:
@@ -692,6 +921,22 @@ class ModelRetrainingManager:
                 early_stopped=training_metrics.get('early_stopped', False),
             )
             self._save_training_history(history_entry)
+            
+            # Update training run in database (failed)
+            self._update_training_run_db(
+                run_id=run_id,
+                status="failed",
+                epochs_completed=training_metrics.get('epochs_trained', 0),
+                final_upright_accuracy=training_metrics.get('final_upright_acc', 0),
+                final_rotation_accuracy=training_metrics.get('final_rotation_acc', 0),
+                best_upright_accuracy=training_metrics.get('best_upright_acc', 0),
+                best_rotation_accuracy=training_metrics.get('best_rotation_acc', 0),
+                early_stopped=training_metrics.get('early_stopped', False),
+                collapse_detected=training_metrics.get('collapse_detected', False),
+                error_message=str(e),
+                training_duration_seconds=training_duration,
+                backup_path=str(backup_path) if backup_path else None,
+            )
             
             if self._on_retrain_complete:
                 self._on_retrain_complete(success=False, error=str(e))
@@ -1148,7 +1393,56 @@ class ModelRetrainingManager:
         )
         val_loader = DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False, num_workers=0)
         
-        # === STEP 3: Compute EWC Fisher information ===
+        # === STEP 3: Setup Knowledge Distillation (if enabled) ===
+        teacher_ensemble = None
+        kd_loss_fn = None
+        if self.config.use_knowledge_distillation:
+            try:
+                from .kd_training import TeacherEnsemble, KDConfig, KnowledgeDistillationLoss
+                
+                logger.info("Setting up Knowledge Distillation with teacher ensemble...")
+                kd_config = KDConfig(
+                    temperature=self.config.kd_temperature,
+                    alpha=self.config.kd_alpha,
+                    beta=self.config.kd_beta,
+                    teacher_models_dir=self.config.teacher_models_dir,
+                    use_student_as_teacher=self.config.use_student_as_teacher
+                )
+                
+                # Load deployed student as a teacher (copy current model state)
+                deployed_student_copy = None
+                if self.config.use_student_as_teacher:
+                    import copy as copy_module
+                    deployed_student_copy = copy_module.deepcopy(model)
+                    deployed_student_copy.eval()
+                
+                num_classes = len(self.CLASS_NAMES) + (1 if self.config.include_junk_class else 0)
+                teacher_ensemble = TeacherEnsemble(
+                    config=kd_config,
+                    deployed_student=deployed_student_copy,
+                    num_classes=num_classes,
+                    device=device
+                )
+                
+                kd_loss_fn = KnowledgeDistillationLoss(
+                    temperature=self.config.kd_temperature,
+                    alpha=self.config.kd_alpha,
+                    beta=self.config.kd_beta,
+                    class_weights=class_weights if self.config.use_class_weights else None
+                )
+                
+                teacher_count = teacher_ensemble.get_teacher_count()
+                teacher_names = teacher_ensemble.get_teacher_names()
+                logger.info(f"KD enabled with {teacher_count} teachers: {teacher_names}")
+                training_metrics['kd_enabled'] = True
+                training_metrics['kd_teacher_count'] = teacher_count
+                training_metrics['kd_teachers'] = teacher_names
+            except Exception as e:
+                logger.warning(f"Could not initialize KD, falling back to CE loss: {e}")
+                teacher_ensemble = None
+                kd_loss_fn = None
+        
+        # === STEP 4: Compute EWC Fisher information ===
         fisher_info = None
         optimal_params = None
         if self.config.use_ewc and len(dataset) > 0:
@@ -1250,7 +1544,17 @@ class ModelRetrainingManager:
                     with autocast('cuda'):
                         outputs = model(images)
                         logits = outputs['logits'] if isinstance(outputs, dict) else outputs
-                        ce_loss = criterion(logits, labels)
+                        
+                        # Use KD loss if teacher ensemble is available
+                        if teacher_ensemble is not None and kd_loss_fn is not None:
+                            # Get soft labels from all teachers
+                            teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
+                            base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                            ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                        else:
+                            # Fallback to CE loss
+                            base_loss = criterion(logits, labels)
+                            ce_loss = base_loss
                         
                         # Add EWC loss with clamping
                         if fisher_info is not None and self.config.use_ewc:
@@ -1258,10 +1562,10 @@ class ModelRetrainingManager:
                                 model, fisher_info, optimal_params,
                                 self.config.ewc_lambda, self.config.max_ewc_loss
                             )
-                            loss = ce_loss + ewc_penalty
+                            loss = base_loss + ewc_penalty
                             ewc_loss_total += ewc_penalty.item()
                         else:
-                            loss = ce_loss
+                            loss = base_loss
                     
                     # Backward with gradient clipping
                     scaler.scale(loss).backward()
@@ -1275,17 +1579,27 @@ class ModelRetrainingManager:
                     # Non-AMP training
                     outputs = model(images)
                     logits = outputs['logits'] if isinstance(outputs, dict) else outputs
-                    ce_loss = criterion(logits, labels)
+                    
+                    # Use KD loss if teacher ensemble is available
+                    if teacher_ensemble is not None and kd_loss_fn is not None:
+                        # Get soft labels from all teachers
+                        teacher_soft_labels = teacher_ensemble.get_soft_labels(images)
+                        base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
+                        ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
+                    else:
+                        # Fallback to CE loss
+                        base_loss = criterion(logits, labels)
+                        ce_loss = base_loss
                     
                     if fisher_info is not None and self.config.use_ewc:
                         ewc_penalty = self._ewc_loss(
                             model, fisher_info, optimal_params,
                             self.config.ewc_lambda, self.config.max_ewc_loss
                         )
-                        loss = ce_loss + ewc_penalty
+                        loss = base_loss + ewc_penalty
                         ewc_loss_total += ewc_penalty.item()
                     else:
-                        loss = ce_loss
+                        loss = base_loss
                     
                     loss.backward()
                     # CRITICAL: Gradient clipping
@@ -1294,7 +1608,7 @@ class ModelRetrainingManager:
                     )
                     optimizer.step()
                 
-                epoch_loss += ce_loss.item()
+                epoch_loss += ce_loss.item() if hasattr(ce_loss, 'item') else ce_loss
                 _, predicted = logits.max(1)
                 total += labels.size(0)
                 correct += predicted.eq(labels).sum().item()
@@ -1399,6 +1713,9 @@ class ModelRetrainingManager:
         """Save the fine-tuned model with training metrics."""
         model_path = Path(self.config.model_path)
         
+        # Calculate the new version string
+        new_version = f"v{self._status.version_major}.{self._status.version_minor}.{self._status.version_patch + 1}"
+        
         # Create new checkpoint with version info
         new_checkpoint = {
             'model_state_dict': model.state_dict(),
@@ -1406,9 +1723,14 @@ class ModelRetrainingManager:
             'fine_tuned': True,
             'fine_tune_date': datetime.now().isoformat(),
             'feedback_images_count': self._status.total_feedback_images,
-            # Version tracking
-            'model_version': self._status.current_version + 1,  # +1 because version increments after save
-            'total_retrains': self._status.total_retrains + 1,
+            # Semantic version tracking
+            'model_version': new_version,
+            'version_major': self._status.version_major,
+            'version_minor': self._status.version_minor,
+            'version_patch': self._status.version_patch + 1,
+            'total_fine_tunes': self._status.total_fine_tunes + 1,
+            'total_comprehensive': self._status.total_comprehensive,
+            'training_type': 'fine_tuning',
         }
         
         # Add training metrics if available
@@ -1425,11 +1747,34 @@ class ModelRetrainingManager:
             if key in original_checkpoint:
                 new_checkpoint[key] = original_checkpoint[key]
         
-        # Save
+        # Save to original path first (for deployment)
         torch.save(new_checkpoint, model_path)
-        logger.info(f"Model saved to {model_path} (will be version {new_checkpoint['model_version']})")
+        logger.info(f"Model saved to {model_path} (version {new_version})")
         
         self._status.training_progress = 1.0
+    
+    def _rename_model_with_version(self, training_metrics: Optional[Dict] = None) -> str:
+        """
+        Copy the saved model to a versioned filename.
+        
+        Returns:
+            Path to the versioned model file
+        """
+        model_path = Path(self.config.model_path)
+        version_str = self._status.current_version_string
+        
+        # Create versioned filename in the same directory as model
+        versioned_name = f"student_model_{version_str}.pt"
+        versioned_path = model_path.parent / versioned_name
+        
+        try:
+            # Copy the model to versioned path (keep original for deployment)
+            shutil.copy2(model_path, versioned_path)
+            logger.info(f"📦 Versioned model saved: {versioned_path}")
+            return str(versioned_path)
+        except Exception as e:
+            logger.warning(f"Could not create versioned model copy: {e}")
+            return str(model_path)
     
     def set_on_retrain_complete(self, callback: Callable):
         """Set callback for when retraining completes."""
@@ -1490,6 +1835,9 @@ def check_retrain_status() -> Dict[str, Any]:
         return {"error": "Retraining manager not initialized"}
     
     status = _retrain_manager.get_status().to_dict()
+    
+    # Add scheduler status
+    status["auto_scheduler_running"] = _retrain_manager.is_scheduler_running()
     
     # Add total historical count
     status["total_historical_feedback"] = _retrain_manager.get_total_historical_feedback_count()

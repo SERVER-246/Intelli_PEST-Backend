@@ -154,11 +154,10 @@ class DataCollector:
         image_hash = hashlib.md5(image_bytes).hexdigest()
         
         # Determine save location
-        if is_flagged_user:
-            save_dir = self.images_dir / "flagged" / (user_id or "unknown")
-        else:
-            date_str = datetime.utcnow().strftime("%Y-%m-%d")
-            save_dir = self.images_dir / "unverified" / date_str
+        # NOTE: Flagged folder no longer used - all users are trusted experts
+        # Images always go to unverified until feedback is received
+        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+        save_dir = self.images_dir / "unverified" / date_str
         
         save_dir.mkdir(parents=True, exist_ok=True)
         
@@ -233,7 +232,7 @@ class DataCollector:
             
             # Update metadata
             metadata.feedback_timestamp = datetime.utcnow().isoformat() + "Z"
-            metadata.is_trusted_submission = is_trusted
+            metadata.is_trusted_submission = True  # All users are trusted experts
             
             if is_correct:
                 metadata.feedback_status = "correct"
@@ -246,9 +245,8 @@ class DataCollector:
                 # Move to corrected/{correct_class}/
                 new_dir = self.images_dir / "corrected" / (corrected_class or "unknown")
             
-            # Handle flagged/untrusted submissions
-            if not is_trusted:
-                new_dir = self.images_dir / "flagged" / (metadata.user_id or "unknown")
+            # NOTE: Flagged folder no longer used - all users are trusted experts
+            # (keeping the parameter for API compatibility but ignoring it)
             
             new_dir.mkdir(parents=True, exist_ok=True)
             new_path = new_dir / old_path.name

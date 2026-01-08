@@ -20,6 +20,24 @@ from .comprehensive_trainer import (
     get_comprehensive_training_status,
 )
 
+from .version_manager import (
+    ModelVersion,
+    ModelVersionManager,
+    VersionRecord,
+    get_version_manager,
+    init_version_manager,
+)
+
+from .kd_training import (
+    TeacherEnsemble,
+    KDConfig,
+    KnowledgeDistillationLoss,
+    ONNXTeacher,
+    PyTorchTeacher,
+    create_teacher_ensemble,
+    get_teacher_soft_labels,
+)
+
 __all__ = [
     # Regular retraining
     'ModelRetrainingManager',
@@ -35,4 +53,18 @@ __all__ = [
     'get_comprehensive_trainer',
     'check_comprehensive_training_trigger',
     'get_comprehensive_training_status',
+    # Version management
+    'ModelVersion',
+    'ModelVersionManager',
+    'VersionRecord',
+    'get_version_manager',
+    'init_version_manager',
+    # Knowledge Distillation
+    'TeacherEnsemble',
+    'KDConfig',
+    'KnowledgeDistillationLoss',
+    'ONNXTeacher',
+    'PyTorchTeacher',
+    'create_teacher_ensemble',
+    'get_teacher_soft_labels',
 ]
