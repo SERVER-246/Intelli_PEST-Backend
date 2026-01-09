@@ -55,6 +55,15 @@ class TeacherConfig:
     enabled: bool = True
 
 
+# List of ensemble models that need TorchScript (their ONNX exports have output scale issues)
+TORCHSCRIPT_ENSEMBLE_MODELS = [
+    'ensemble_cross',
+    'super_ensemble',
+    'ensemble_attention',
+    'ensemble_concat',
+]
+
+
 @dataclass 
 class KDConfig:
     """Knowledge Distillation configuration."""
@@ -67,6 +76,8 @@ class KDConfig:
     
     # Teacher model settings
     teacher_models_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
+    # Directory containing TorchScript (.pt) ensemble models (local backup from G: drive)
+    torchscript_models_dir: str = "D:/Intelli_PEST-Backend/teacher_models/torchscript"
     use_student_as_teacher: bool = True  # Include deployed student as a teacher
     
     # Default teacher weights (higher = more influence)
@@ -143,6 +154,65 @@ class ONNXTeacher:
     
     def is_loaded(self) -> bool:
         return self.session is not None
+
+
+class TorchScriptTeacher:
+    """
+    TorchScript teacher model wrapper.
+    Used for ensemble models where ONNX export has output scale issues.
+    Loads JIT-compiled .pt files from deployment directory.
+    """
+    
+    def __init__(self, name: str, path: Path, weight: float = 1.0, device: str = 'cpu'):
+        self.name = name
+        self.path = path
+        self.weight = weight
+        self.device = device
+        self.model = None
+        self.num_classes = 11  # Default
+        self._load()
+    
+    def _load(self):
+        """Load TorchScript model."""
+        try:
+            self.model = torch.jit.load(str(self.path), map_location=self.device)
+            self.model.eval()
+            
+            # Detect number of output classes
+            with torch.no_grad():
+                dummy = torch.randn(1, 3, 256, 256, device=self.device)
+                output = self.model(dummy)
+                self.num_classes = output.shape[1]
+            
+            logger.info(f"  Loaded TorchScript teacher: {self.name} (weight={self.weight}, classes={self.num_classes})")
+        except Exception as e:
+            logger.error(f"  Failed to load TorchScript {self.name}: {e}")
+            self.model = None
+    
+    def predict(self, images: torch.Tensor) -> Optional[torch.Tensor]:
+        """
+        Run inference on images.
+        
+        Args:
+            images: Input as torch tensor (B, C, H, W)
+            
+        Returns:
+            Logits as torch tensor (B, num_classes) or None if failed
+        """
+        if self.model is None:
+            return None
+        
+        try:
+            with torch.no_grad():
+                images = images.to(self.device)
+                outputs = self.model(images)
+                return outputs
+        except Exception as e:
+            logger.error(f"TorchScript inference error for {self.name}: {e}")
+            return None
+    
+    def is_loaded(self) -> bool:
+        return self.model is not None
 
 
 class PyTorchTeacher:
@@ -612,6 +682,7 @@ class SingleTeacher:
     """
     Single teacher wrapper for sequential training.
     Loads ONE teacher at a time to minimize memory usage.
+    Supports ONNX, TorchScript, and PyTorch models.
     """
     
     def __init__(
@@ -623,6 +694,7 @@ class SingleTeacher:
         temperature: float,
         device: str = 'cuda',
         is_pytorch: bool = False,
+        is_torchscript: bool = False,
         pytorch_model: Optional[nn.Module] = None
     ):
         self.name = teacher_name
@@ -632,8 +704,9 @@ class SingleTeacher:
         self.temperature = temperature
         self.device = device
         self.is_pytorch = is_pytorch
+        self.is_torchscript = is_torchscript
         self.teacher = None
-        self.teacher_num_classes = 11  # ONNX teachers have 11 classes
+        self.teacher_num_classes = 11  # Default for ONNX teachers
         
         if is_pytorch and pytorch_model is not None:
             self.teacher = PyTorchTeacher(
@@ -643,11 +716,21 @@ class SingleTeacher:
                 device=device
             )
             self.teacher_num_classes = self.teacher.num_classes
-        elif not is_pytorch and teacher_path and teacher_path.exists():
+        elif is_torchscript and teacher_path and teacher_path.exists():
+            # Load TorchScript model for ensemble teachers
+            self.teacher = TorchScriptTeacher(
+                name=teacher_name,
+                path=teacher_path,
+                weight=weight,
+                device='cpu'  # TorchScript ensembles are large, use CPU
+            )
+            self.teacher_num_classes = self.teacher.num_classes
+        elif not is_pytorch and not is_torchscript and teacher_path and teacher_path.exists():
             self.teacher = ONNXTeacher(teacher_name, teacher_path, weight, num_classes)
         
         if self.teacher and self.teacher.is_loaded():
-            logger.info(f"  ✓ Loaded teacher: {teacher_name} (weight={weight}, classes={self.teacher_num_classes})")
+            model_type = "TorchScript" if is_torchscript else ("PyTorch" if is_pytorch else "ONNX")
+            logger.info(f"  ✓ Loaded {model_type} teacher: {teacher_name} (weight={weight}, classes={self.teacher_num_classes})")
         else:
             logger.warning(f"  ✗ Failed to load teacher: {teacher_name}")
     
@@ -661,9 +744,13 @@ class SingleTeacher:
         batch_size = images.size(0)
         device = images.device
         
-        if self.is_pytorch:
+        if self.is_pytorch or self.is_torchscript:
+            # PyTorch and TorchScript teachers use torch tensors
             logits = self.teacher.predict(images)
+            if logits is not None:
+                logits = logits.to(device)
         else:
+            # ONNX teachers use numpy arrays
             images_np = images.cpu().numpy()
             logits_np = self.teacher.predict(images_np)
             if logits_np is None:
@@ -763,6 +850,7 @@ class SequentialTeacherKD:
         self.device = device
         self.deployed_student = deployed_student
         self.models_dir = Path(config.teacher_models_dir)
+        self.torchscript_dir = Path(config.torchscript_models_dir)
         self.epochs_per_teacher = epochs_per_teacher
         
         # Verify available teachers
@@ -771,6 +859,14 @@ class SequentialTeacherKD:
             if name == 'deployed_student':
                 if deployed_student is not None:
                     self.available_teachers.append(name)
+            elif name in TORCHSCRIPT_ENSEMBLE_MODELS:
+                # Check for TorchScript model in local backup directory
+                ts_path = self.torchscript_dir / f"{name}.pt"
+                if ts_path.exists():
+                    self.available_teachers.append(name)
+                    logger.info(f"  Found TorchScript ensemble: {name}")
+                else:
+                    logger.warning(f"  TorchScript not found for {name}: {ts_path}")
             else:
                 path = self.models_dir / f"{name}.onnx"
                 if path.exists():
@@ -778,6 +874,8 @@ class SequentialTeacherKD:
         
         logger.info(f"Sequential KD initialized with {len(self.available_teachers)} teachers")
         logger.info(f"Teacher order: {self.available_teachers}")
+        logger.info(f"ONNX models dir: {self.models_dir}")
+        logger.info(f"TorchScript models dir: {self.torchscript_dir}")
         logger.info(f"Student output classes: {num_classes}")
     
     def get_teacher_count(self) -> int:
@@ -801,7 +899,21 @@ class SequentialTeacherKD:
                 is_pytorch=True,
                 pytorch_model=self.deployed_student
             )
+        elif teacher_name in TORCHSCRIPT_ENSEMBLE_MODELS:
+            # Load TorchScript model for ensemble teachers (from local backup)
+            ts_path = self.torchscript_dir / f"{teacher_name}.pt"
+            return SingleTeacher(
+                teacher_name=teacher_name,
+                teacher_path=ts_path,
+                weight=weight,
+                num_classes=self.num_classes,
+                temperature=self.config.temperature,
+                device=self.device,
+                is_pytorch=False,
+                is_torchscript=True
+            )
         else:
+            # Load ONNX model for single architecture teachers
             path = self.models_dir / f"{teacher_name}.onnx"
             return SingleTeacher(
                 teacher_name=teacher_name,
@@ -810,7 +922,8 @@ class SequentialTeacherKD:
                 num_classes=self.num_classes,
                 temperature=self.config.temperature,
                 device=self.device,
-                is_pytorch=False
+                is_pytorch=False,
+                is_torchscript=False
             )
     
     def iterate_teachers(self):

@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .routers import router, admin_router
+from .app_management import app_router
 from .dependencies import (
     set_inference_engine,
     set_validation_pipeline,
@@ -203,6 +204,7 @@ def create_app(
     # Include routers
     app.include_router(router)
     app.include_router(admin_router)
+    app.include_router(app_router)
     
     # Root endpoint
     @app.get("/")

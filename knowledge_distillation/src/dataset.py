@@ -342,7 +342,7 @@ if __name__ == "__main__":
     # Test the dataset
     logging.basicConfig(level=logging.INFO)
     
-    data_dir = r"G:\AI work\IMAGE DATASET"
+    data_dir = r"D:\IMAGE DATASET"
     
     train_loader, val_loader, info = create_dataloaders(
         data_dir=data_dir,

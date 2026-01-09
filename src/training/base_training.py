@@ -204,8 +204,8 @@ CKPT_PATHS = {
 }
 
 # dataset paths
-RAW_DIR = Path(r"G:\\ML-Model Code\\pest_dataset")
-SPLIT_DIR = Path(r"G:\\ML-Model Code\\split_dataset")
+RAW_DIR = Path(r"D:\IMAGE DATASET")
+SPLIT_DIR = Path(r"D:\IMAGE DATASET")
 TRAIN_DIR = SPLIT_DIR / "train"
 VAL_DIR = SPLIT_DIR / "val"
 TEST_DIR = SPLIT_DIR / "test"

@@ -80,6 +80,12 @@ metrics_output/
 kfold_results/
 feedback_data/
 test_images/
+feedback_images/
+
+# ============================================
+# Model Backups (images - too large for git)
+# ============================================
+model_backups/history/
 
 # ============================================
 # Test and Debug Scripts (not part of production)

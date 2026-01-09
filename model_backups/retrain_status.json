@@ -1,11 +1,11 @@
 {
-    "version_minor":  0,
-    "last_trained":  null,
-    "updated_at":  "2026-01-08T13:31:05.668761",
-    "current_version_string":  "v1.0.0",
-    "total_fine_tunes":  0,
-    "last_backup_path":  null,
-    "version_major":  1,
-    "version_patch":  0,
-    "total_comprehensive":  0
+  "last_trained": "2026-01-08T17:22:25.426447",
+  "last_backup_path": "model_backups\\student_model_rotation_robust_backup_20260108_161437.pt",
+  "version_major": 1,
+  "version_minor": 0,
+  "version_patch": 1,
+  "current_version_string": "v1.0.1",
+  "total_fine_tunes": 1,
+  "total_comprehensive": 0,
+  "updated_at": "2026-01-08T17:22:25.426447"
 }

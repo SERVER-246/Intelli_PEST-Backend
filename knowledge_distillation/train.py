@@ -9,7 +9,7 @@ Date: 2024-12-23
 
 Usage:
     python train.py --config configs/config.yaml
-    python train.py --data_dir "G:/AI work/IMAGE DATASET" --epochs 100
+    python train.py --data_dir "D:/IMAGE DATASET" --epochs 100
 """
 
 import os

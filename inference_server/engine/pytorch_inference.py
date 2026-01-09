@@ -152,7 +152,13 @@ class PyTorchInference:
             
             state_dict = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
             class_names = checkpoint.get('class_names', self.class_names)
-            num_classes = len(class_names) if class_names else self.num_classes
+            
+            # Determine num_classes from main classifier in state_dict (not from class_names which may include junk)
+            main_classifier_key = 'classifier.6.weight'  # Main classifier layer
+            if main_classifier_key in state_dict:
+                num_classes = state_dict[main_classifier_key].shape[0]
+            else:
+                num_classes = len(class_names) if class_names else self.num_classes
             
             # Update class names if available in checkpoint
             if class_names:
@@ -174,9 +180,22 @@ class PyTorchInference:
                     base_channels=base_channels
                 )
                 
-                # Load weights (allow partial loading)
-                model.load_state_dict(state_dict, strict=False)
+                # Filter state dict to skip mismatched aux_classifiers (not needed for inference)
+                model_state = model.state_dict()
+                filtered_state_dict = {}
+                for key, value in state_dict.items():
+                    if key in model_state:
+                        if model_state[key].shape == value.shape:
+                            filtered_state_dict[key] = value
+                        else:
+                            logger.debug(f"Skipping mismatched layer: {key}")
+                    else:
+                        filtered_state_dict[key] = value
+                
+                # Load weights (allow partial loading for any remaining mismatches)
+                model.load_state_dict(filtered_state_dict, strict=False)
                 logger.info(f"Successfully created EnhancedStudentModel with {num_classes} classes")
+                return model
                 return model
                 
             except ImportError:

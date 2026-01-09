@@ -58,7 +58,7 @@ METRICS_DIR = BASE_DIR / 'metrics_output'
 CKPT_DIR = BASE_DIR / 'checkpoints'
 
 # Dataset paths
-SPLIT_DIR = Path(r"G:\ML-Model Code\split_dataset")
+SPLIT_DIR = Path(r"D:\IMAGE DATASET")
 TRAIN_DIR = SPLIT_DIR / "train"
 VAL_DIR = SPLIT_DIR / "val"
 

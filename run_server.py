@@ -14,23 +14,25 @@ LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 logging.basicConfig(format=LOG_FORMAT, datefmt=DATE_FORMAT, level=logging.INFO)
 
-# Available models - use the rotation-robust exported models
+# Available models
+# Use the PROPERLY EXPANDED 12-class model (preserves 96.25% accuracy + adds junk class)
 MODELS = {
-    "pytorch": r"D:\KnowledgeDistillation\student_model_rotation_robust.pt",
+    "pytorch": r"D:\KnowledgeDistillation\student_model_12class_proper.pt",
+    "pytorch_11class": r"D:\KnowledgeDistillation\student_model_final.pth",  # Original 11-class backup
     "onnx": r"D:\KnowledgeDistillation\exported_models\student_model_rotation_robust.onnx",
 }
 
-# Legacy models (kept for reference)
-LEGACY_MODELS = {
-    "pytorch": r"D:\KnowledgeDistillation\exported_models\student_model.pt",
-    "onnx": r"D:\KnowledgeDistillation\exported_models\student_model.onnx",
+# Broken models (for reference - DO NOT USE)
+BROKEN_MODELS = {
+    "v1.0.1_broken": r"D:\KnowledgeDistillation\student_model_v1.0.1.pt",  # aux_classifiers mismatch
+    "rotation_robust_broken": r"D:\KnowledgeDistillation\student_model_rotation_robust.pt",
 }
 
 # Default model format
 DEFAULT_FORMAT = "pytorch"
 MODEL_PATH = MODELS[DEFAULT_FORMAT]
 
-# Class names for feedback system
+# Class names for feedback system (12 classes including junk)
 CLASS_NAMES = [
     "Healthy",
     "Internode borer",
@@ -43,6 +45,7 @@ CLASS_NAMES = [
     "porcupine damage",
     "root borer",
     "termite",
+    "junk",  # Filter class for unrelated images
 ]
 
 if __name__ == "__main__":

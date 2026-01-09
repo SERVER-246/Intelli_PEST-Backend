@@ -84,7 +84,7 @@ class ComprehensiveTrainingConfig:
     # Data sources
     dataset_paths: List[str] = field(default_factory=lambda: [
         "D:/Test-images",
-        "G:/AI work/IMAGE DATASET",
+        "D:/IMAGE DATASET",
     ])
     feedback_images_dir: str = "./feedback_data/images"
     archived_images_dir: str = "./model_backups/history"
@@ -1004,7 +1004,15 @@ class ComprehensiveTrainer:
         return model.to(device)
     
     def _expand_classifier(self, model, new_num_classes: int):
-        """Expand classifier for additional classes."""
+        """
+        Expand classifier AND aux_classifiers for additional classes.
+        
+        CRITICAL: This preserves original class weights exactly and only initializes
+        new class weights. The original 11 classes' learned patterns are untouched.
+        """
+        old_num_classes = None
+        
+        # 1. Expand main classifier (classifier.6 in Sequential)
         if hasattr(model, 'classifier') and isinstance(model.classifier, nn.Sequential):
             for i in range(len(model.classifier) - 1, -1, -1):
                 if isinstance(model.classifier[i], nn.Linear):
@@ -1012,17 +1020,91 @@ class ComprehensiveTrainer:
                     in_features = old_linear.in_features
                     old_num_classes = old_linear.out_features
                     
+                    if old_num_classes >= new_num_classes:
+                        logger.info(f"Main classifier already has {old_num_classes} classes")
+                        break
+                    
                     new_linear = nn.Linear(in_features, new_num_classes)
+                    
+                    # Copy old weights EXACTLY
                     with torch.no_grad():
-                        new_linear.weight[:old_num_classes] = old_linear.weight
-                        new_linear.bias[:old_num_classes] = old_linear.bias
-                        nn.init.xavier_uniform_(new_linear.weight[old_num_classes:])
-                        nn.init.zeros_(new_linear.bias[old_num_classes:])
+                        new_linear.weight[:old_num_classes] = old_linear.weight.clone()
+                        new_linear.bias[:old_num_classes] = old_linear.bias.clone()
+                        # Small init for new class - prevents dominating softmax
+                        nn.init.normal_(new_linear.weight[old_num_classes:], mean=0.0, std=0.01)
+                        nn.init.constant_(new_linear.bias[old_num_classes:], -2.0)
                     
                     model.classifier[i] = new_linear
-                    logger.info(f"Expanded classifier: {old_num_classes} → {new_num_classes} classes")
+                    logger.info(f"Expanded main classifier: {old_num_classes} → {new_num_classes}")
                     break
+        
+        # 2. Expand aux_classifiers
+        if hasattr(model, 'aux_classifiers') and old_num_classes is not None:
+            aux_classifiers = model.aux_classifiers
+            if isinstance(aux_classifiers, nn.ModuleDict):
+                for stage_name, aux_clf in aux_classifiers.items():
+                    if isinstance(aux_clf, nn.Sequential):
+                        for j in range(len(aux_clf) - 1, -1, -1):
+                            if isinstance(aux_clf[j], nn.Linear):
+                                old_aux = aux_clf[j]
+                                aux_in = old_aux.in_features
+                                aux_old = old_aux.out_features
+                                
+                                if aux_old >= new_num_classes:
+                                    break
+                                
+                                new_aux = nn.Linear(aux_in, new_num_classes)
+                                with torch.no_grad():
+                                    new_aux.weight[:aux_old] = old_aux.weight.clone()
+                                    new_aux.bias[:aux_old] = old_aux.bias.clone()
+                                    nn.init.normal_(new_aux.weight[aux_old:], mean=0.0, std=0.01)
+                                    nn.init.constant_(new_aux.bias[aux_old:], -2.0)
+                                
+                                aux_clf[j] = new_aux
+                                logger.info(f"Expanded aux_classifier[{stage_name}]: {aux_old} → {new_num_classes}")
+                                break
+        
         return model
+    
+    def _freeze_original_class_weights(self, model, num_original_classes: int = 11):
+        """
+        Freeze weights for original classes using gradient hooks.
+        Only allows gradients for new class(es) to flow.
+        """
+        def make_gradient_hook(num_original: int, is_weight: bool = True):
+            def hook(grad):
+                if grad is None:
+                    return grad
+                new_grad = grad.clone()
+                if is_weight:
+                    new_grad[:num_original] = 0
+                else:
+                    new_grad[:num_original] = 0
+                return new_grad
+            return hook
+        
+        hooks = []
+        
+        # Hook main classifier
+        if hasattr(model, 'classifier') and isinstance(model.classifier, nn.Sequential):
+            for layer in model.classifier:
+                if isinstance(layer, nn.Linear) and layer.out_features > num_original_classes:
+                    hook_w = layer.weight.register_hook(make_gradient_hook(num_original_classes, True))
+                    hook_b = layer.bias.register_hook(make_gradient_hook(num_original_classes, False))
+                    hooks.extend([hook_w, hook_b])
+        
+        # Hook aux_classifiers
+        if hasattr(model, 'aux_classifiers'):
+            for stage_name, aux_clf in model.aux_classifiers.items():
+                if isinstance(aux_clf, nn.Sequential):
+                    for layer in aux_clf:
+                        if isinstance(layer, nn.Linear) and layer.out_features > num_original_classes:
+                            hook_w = layer.weight.register_hook(make_gradient_hook(num_original_classes, True))
+                            hook_b = layer.bias.register_hook(make_gradient_hook(num_original_classes, False))
+                            hooks.extend([hook_w, hook_b])
+        
+        logger.info(f"Froze original {num_original_classes} classes with {len(hooks)} gradient hooks")
+        return hooks
     
     def _backup_model(self):
         """Backup the original model before training."""
