@@ -73,19 +73,19 @@ class InferenceEngine:
     Provides a consistent interface regardless of underlying model format.
     """
     
-    # Class name mapping
+    # Class name mapping - ORDER MUST MATCH ImageFolder alphabetical sorting!
     CLASS_NAMES = [
         "Healthy",
-        "army worm",
         "Internode borer",
-        "mealy bug",
         "Pink borer",
-        "porcupine damage",
         "Rat damage",
-        "root borer",
         "Stalk borer",
-        "termite",
         "Top borer",
+        "army worm",
+        "mealy bug",
+        "porcupine damage",
+        "root borer",
+        "termite",
     ]
     
     def __init__(

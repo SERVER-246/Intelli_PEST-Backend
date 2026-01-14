@@ -46,6 +46,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Import shared training utilities for Ghost-alignment
+# Note: training_utils provides standardized kd_loss with proper class mismatch handling
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'black_ops_training'))
+try:
+    from training_utils import (
+        kd_loss as ghost_kd_loss,
+        extract_logits,
+        BatchConfig,
+        MAX_PHYSICAL_BATCH_SIZE,
+        MIN_KEY_LOAD_RATIO,
+        MIN_VALID_TEACHERS,
+        check_recovery_trigger,
+        RecoveryState,
+        UnifiedLogger,
+        load_checkpoint_flexible,
+        CheckpointLoadResult,
+        PreflightChecker,
+        CheckSeverity,
+        PreflightCheckResult,
+        ExitCode,
+        get_teacher_lr_multiplier,
+        PerTeacherConfig,
+    )
+    TRAINING_UTILS_AVAILABLE = True
+except ImportError:
+    TRAINING_UTILS_AVAILABLE = False
+    MIN_KEY_LOAD_RATIO = 0.80
+    MIN_VALID_TEACHERS = 8
+    logger.warning("training_utils not available, using local implementations")
+
 # Lazy imports
 TORCH_AVAILABLE = False
 try:
@@ -112,12 +142,14 @@ class ComprehensiveTrainingConfig:
     epochs_per_teacher: int = 25  # Epochs per teacher for sequential KD training
     
     # EWC (Elastic Weight Consolidation)
-    use_ewc: bool = True
-    ewc_lambda: float = 100.0
-    max_ewc_loss: float = 1.0
+    # WARNING: EWC can cause NaN loss explosion after many epochs - disabled by default
+    # If re-enabling, keep ewc_lambda: 10.0 and max_ewc_loss: 0.1
+    use_ewc: bool = False  # Disabled - was causing NaN loss in ghost training
+    ewc_lambda: float = 10.0  # Reduced from 100 to prevent explosion
+    max_ewc_loss: float = 0.1  # Reduced from 1.0 - prevents EWC from dominating
     
     # Gradient clipping
-    gradient_clip_norm: float = 1.0
+    gradient_clip_norm: float = 0.5  # Reduced from 1.0 for stability
     
     # Learning rate schedule
     warmup_epochs: int = 3
@@ -585,6 +617,62 @@ class ComprehensiveTrainer:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             logger.info(f"Training on device: {device}")
             
+            # === STEP 0: PRE-FLIGHT CHECKS (Step 1.5) ===
+            if TRAINING_UTILS_AVAILABLE:
+                logger.info("="*60)
+                logger.info("Step 0: Running Pre-Flight Checks (Step 1.5)")
+                logger.info("="*60)
+                
+                # Get teacher paths
+                teacher_paths = []
+                teacher_dir = Path(self.config.teacher_dir)
+                if teacher_dir.exists():
+                    teacher_paths = list(teacher_dir.glob("**/*.pt"))
+                
+                # Get dataset path
+                dataset_path = None
+                for path in self.config.data_paths:
+                    if Path(path).exists():
+                        dataset_path = Path(path)
+                        break
+                
+                preflight_checker = PreflightChecker(
+                    config={
+                        'output_dir': str(self._output_dir),
+                        'learning_rate': self.config.learning_rate,
+                        'batch_size': self.config.batch_size,
+                        'epochs': self.config.num_epochs,
+                        'temperature': self.config.kd_temperature,
+                        'mixup_alpha': 0.2,
+                        'cutmix_alpha': 1.0,
+                        'rotation_augmentation': True,
+                    },
+                    log_fn=logger.info,
+                    teacher_paths=teacher_paths,
+                    dataset_path=dataset_path,
+                    model_path=Path(self.config.model_path)
+                )
+                
+                preflight_results = preflight_checker.run_all_checks()
+                
+                # Write preflight report
+                try:
+                    unified_logger = UnifiedLogger(self._output_dir)
+                    unified_logger.write_preflight_report(preflight_results)
+                    logger.info(f"Pre-flight report saved to: {unified_logger.preflight_report}")
+                except Exception as e:
+                    logger.warning(f"Could not save preflight report: {e}")
+                
+                # Abort on critical failures
+                if preflight_checker.should_abort(preflight_results):
+                    logger.error("CRITICAL PRE-FLIGHT CHECK(S) FAILED - Aborting")
+                    self._state.status = "failed"
+                    self._state.error_message = "Critical pre-flight check(s) failed"
+                    self._save_state()
+                    return
+                
+                logger.info("Pre-flight checks passed")
+            
             # === STEP 1: Collect all data sources ===
             logger.info("Step 1: Collecting data sources...")
             data_paths = self._collect_data_paths()
@@ -912,11 +1000,27 @@ class ComprehensiveTrainer:
         return paths
     
     def _create_balanced_dataloader(self, dataset: ComprehensiveDataset, device: str) -> DataLoader:
-        """Create a balanced dataloader with oversampling."""
+        """Create a balanced dataloader with oversampling and batch size enforcement."""
+        # Configure batch size with hard limit enforcement (Step 1.3)
+        if TRAINING_UTILS_AVAILABLE:
+            batch_config = BatchConfig.from_requested(
+                requested_batch_size=self.config.batch_size,
+                max_physical=MAX_PHYSICAL_BATCH_SIZE,
+                enable_adaptive_probe=True
+            )
+            batch_config.log_config(logger.info)
+            physical_batch_size = batch_config.physical_batch_size
+            # Store for training loop
+            self._batch_config = batch_config
+        else:
+            physical_batch_size = min(self.config.batch_size, 16)  # Hard limit fallback
+            self._batch_config = None
+            logger.info(f"Batch size (fallback): {physical_batch_size}")
+        
         if not self.config.oversample_minority:
             return DataLoader(
                 dataset,
-                batch_size=self.config.batch_size,
+                batch_size=physical_batch_size,  # Use enforced physical limit
                 shuffle=True,
                 num_workers=12,
                 pin_memory=True if device == 'cuda' else False,
@@ -924,11 +1028,6 @@ class ComprehensiveTrainer:
             )
         
         # Compute sample weights
-        class_counts = [0] * len(dataset.class_names)
-        for _, label, _ in dataset:
-            class_counts[label] += 1
-        
-        # Reset and count properly
         class_counts = [0] * len(dataset.class_names)
         for _, label in dataset.samples:
             class_counts[label] += 1
@@ -949,7 +1048,7 @@ class ComprehensiveTrainer:
         
         return DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=physical_batch_size,  # Use enforced physical limit
             sampler=sampler,
             num_workers=12,
             pin_memory=True if device == 'cuda' else False,
@@ -957,7 +1056,23 @@ class ComprehensiveTrainer:
         )
     
     def _load_model(self, num_classes: int, device: str):
-        """Load the model for training."""
+        """
+        Load the model for training with flexible checkpoint loading.
+        
+        Uses a 3-tier loading strategy (Step 1.4):
+        1. Try strict loading (all keys must match)
+        2. Try permissive loading (strict=False)
+        3. Try backbone-only loading (filter classifier keys)
+        
+        Aborts if less than MIN_KEY_LOAD_RATIO (80%) of keys load successfully.
+        
+        Args:
+            num_classes: Number of output classes
+            device: Device to load model to
+            
+        Returns:
+            Loaded model on device
+        """
         import sys
         
         model_path = Path(self.config.model_path)
@@ -984,13 +1099,43 @@ class ComprehensiveTrainer:
             stem_weight = state_dict.get('stem.0.weight')
             base_channels = stem_weight.shape[0] if stem_weight is not None else 48
             
-            original_num_classes = 11
-            model = EnhancedStudentModel(num_classes=original_num_classes, base_channels=base_channels)
-            model.load_state_dict(state_dict, strict=False)
+            # Detect number of classes from checkpoint's classifier layer
+            # This is critical - the checkpoint may have 11 or 12 classes depending on whether
+            # it was trained with the junk class
+            checkpoint_num_classes = 11  # Default fallback
+            classifier_weight = state_dict.get('classifier.6.weight')
+            if classifier_weight is not None:
+                checkpoint_num_classes = classifier_weight.shape[0]
+                logger.info(f"Detected {checkpoint_num_classes} classes from checkpoint")
             
-            # Expand classifier if needed
-            if num_classes > original_num_classes:
+            # Create model with same number of classes as checkpoint
+            model = EnhancedStudentModel(num_classes=checkpoint_num_classes, base_channels=base_channels)
+            
+            # Step 1.4: Use flexible checkpoint loading
+            if TRAINING_UTILS_AVAILABLE:
+                load_result = load_checkpoint_flexible(
+                    model=model,
+                    checkpoint_path=model_path,
+                    device=torch.device(device),
+                    min_load_ratio=MIN_KEY_LOAD_RATIO,
+                    log_details=True
+                )
+                
+                if not load_result.success:
+                    raise RuntimeError(f"Checkpoint loading failed: {load_result.error}")
+                
+                logger.info(f"Loaded EnhancedStudentModel: method={load_result.method}, "
+                           f"keys={load_result.keys_loaded}/{load_result.keys_total} "
+                           f"({load_result.load_ratio:.1%})")
+            else:
+                # Fallback: Original strict=False loading
+                model.load_state_dict(state_dict, strict=False)
+                logger.info(f"Loaded EnhancedStudentModel with {checkpoint_num_classes} classes (fallback)")
+            
+            # Expand classifier if we need more classes than checkpoint has
+            if num_classes > checkpoint_num_classes:
                 model = self._expand_classifier(model, num_classes)
+                logger.info(f"Expanded model from {checkpoint_num_classes} to {num_classes} classes")
             
             logger.info(f"Loaded EnhancedStudentModel with {num_classes} classes")
             
@@ -1285,6 +1430,7 @@ class ComprehensiveTrainer:
         correct = 0
         total = 0
         
+        batch_idx = 0
         for images, labels, rotation_angles in dataloader:
             images = images.to(device)
             labels = labels.to(device)
@@ -1296,8 +1442,21 @@ class ComprehensiveTrainer:
                     outputs = model(images)
                     logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                     
+                    # NaN check on model outputs
+                    if torch.isnan(logits).any():
+                        logger.warning(f"NaN detected in model outputs at batch {batch_idx}, skipping...")
+                        batch_idx += 1
+                        continue
+                    
                     # Get soft labels from SINGLE teacher
                     teacher_soft_labels = teacher.get_soft_labels(images)
+                    
+                    # NaN check on soft labels
+                    if teacher_soft_labels is not None and torch.isnan(teacher_soft_labels).any():
+                        logger.warning(f"NaN detected in soft labels at batch {batch_idx}, skipping...")
+                        batch_idx += 1
+                        continue
+                    
                     base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
                     ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
                     
@@ -1306,6 +1465,12 @@ class ComprehensiveTrainer:
                         loss = base_loss + ewc_penalty
                     else:
                         loss = base_loss
+                    
+                    # NaN and sanity check on total loss
+                    if torch.isnan(loss) or loss.item() > 100:
+                        logger.warning(f"Loss explosion/NaN at batch {batch_idx}: {loss.item() if not torch.isnan(loss) else 'NaN'}, skipping...")
+                        batch_idx += 1
+                        continue
                 
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -1316,7 +1481,20 @@ class ComprehensiveTrainer:
                 outputs = model(images)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                 
+                # NaN check on model outputs
+                if torch.isnan(logits).any():
+                    logger.warning(f"NaN detected in model outputs at batch {batch_idx}, skipping...")
+                    batch_idx += 1
+                    continue
+                
                 teacher_soft_labels = teacher.get_soft_labels(images)
+                
+                # NaN check on soft labels
+                if teacher_soft_labels is not None and torch.isnan(teacher_soft_labels).any():
+                    logger.warning(f"NaN detected in soft labels at batch {batch_idx}, skipping...")
+                    batch_idx += 1
+                    continue
+                
                 base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
                 ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
                 
@@ -1326,6 +1504,12 @@ class ComprehensiveTrainer:
                 else:
                     loss = base_loss
                 
+                # NaN and sanity check on total loss
+                if torch.isnan(loss) or loss.item() > 100:
+                    logger.warning(f"Loss explosion/NaN at batch {batch_idx}: {loss.item() if not torch.isnan(loss) else 'NaN'}, skipping...")
+                    batch_idx += 1
+                    continue
+                
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.gradient_clip_norm)
                 optimizer.step()
@@ -1334,8 +1518,9 @@ class ComprehensiveTrainer:
             _, predicted = logits.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
+            batch_idx += 1
         
-        return total_loss / len(dataloader), 100. * correct / total
+        return total_loss / max(len(dataloader), 1), 100. * correct / max(total, 1)
     
     def _train_epoch(self, model, dataloader, optimizer, criterion, scaler, device, epoch):
         """Train one epoch - Fallback CE loss only (when sequential KD not available)."""
