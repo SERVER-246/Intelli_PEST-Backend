@@ -1,5 +1,10 @@
 # .gitignore for Intelli_PEST-Backend
 
+# ============================================
+# BLACK-OPS (Covert Training - NEVER COMMIT)
+# ============================================
+black_ops_training/
+
 # Python
 __pycache__/
 *.py[cod]

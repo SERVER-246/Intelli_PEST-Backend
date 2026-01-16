@@ -2,12 +2,17 @@
 Unified Inference Engine
 ========================
 High-level inference interface that abstracts model format differences.
+
+Includes Phase 3 integration for advanced capabilities:
+- Region-aware perception
+- Multi-label classification
+- Attention maps for explainability
 """
 
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import time
 
 from .model_loader import ModelLoader, ModelFormat, ModelInfo, get_model_loader
@@ -24,6 +29,36 @@ try:
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
+
+# Phase 3 integration (optional)
+try:
+    import sys
+    # Add black_ops_training to path for Phase 3 imports
+    _BLACK_OPS_DIR = Path(__file__).parent.parent.parent / "black_ops_training"
+    if _BLACK_OPS_DIR.exists() and str(_BLACK_OPS_DIR) not in sys.path:
+        sys.path.insert(0, str(_BLACK_OPS_DIR))
+    
+    from phase3_enabled_config import (  # pyright: ignore
+        Phase3ProductionMode,
+        enable_phase3,
+        disable_phase3_completely,
+        get_phase3_status,
+        create_inference_phase3_config,
+    )
+    from phase3_integration import (  # pyright: ignore
+        Phase3Configuration,
+        Phase3IntegrationManager,
+        Phase3SafeIntegrationWrapper,
+        Phase3IntegrationResult,
+        initialize_phase3,
+        get_phase3_manager,
+    )
+    from phase3_dormant_components import Phase3DormancyFlags  # pyright: ignore
+    PHASE3_AVAILABLE = True
+    logger.info("Phase 3 integration available")
+except ImportError as e:
+    PHASE3_AVAILABLE = False
+    logger.debug(f"Phase 3 not available: {e}")
 
 
 @dataclass
@@ -42,13 +77,48 @@ class InferenceResult:
     device: str = ""
     error: Optional[str] = None
     
+    # Phase 3 extended results
+    phase3_enabled: bool = False
+    phase3_result: Optional[Dict[str, Any]] = None
+    multi_label_predictions: Optional[List[Dict[str, Any]]] = None
+    region_scores: Optional[Dict[int, float]] = None
+    attention_map: Optional[Any] = None
+    
     def __post_init__(self):
         if self.probabilities is None:
             self.probabilities = {}
     
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-like get method for backward compatibility."""
+        # Map common keys to dataclass fields
+        key_map = {
+            "class_name": self.class_name,
+            "predicted_class": self.predicted_class,
+            "confidence": self.confidence,
+            "probabilities": self.probabilities,
+            "logits": self.logits,
+            "features": self.features,
+            "inference_time_ms": self.inference_time_ms,
+            "model_name": self.model_name,
+            "model_format": self.model_format,
+            "device": self.device,
+            "error": self.error,
+            "success": self.success,
+            "phase3": self.phase3_result,
+            "phase3_enabled": self.phase3_enabled,
+        }
+        return key_map.get(key, default)
+    
+    def __getitem__(self, key: str) -> Any:
+        """Dict-like access for backward compatibility."""
+        result = self.get(key)
+        if result is None and key not in ["error", "phase3", "features", "logits"]:
+            raise KeyError(key)
+        return result
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API response."""
-        return {
+        result = {
             "success": self.success,
             "prediction": {
                 "class": self.class_name,
@@ -64,6 +134,20 @@ class InferenceResult:
             },
             "error": self.error,
         }
+        
+        # Add Phase 3 results if available
+        if self.phase3_enabled and self.phase3_result:
+            result["phase3"] = {
+                "enabled": True,
+                "multi_label": self.multi_label_predictions,
+                "regions": {
+                    "scores": self.region_scores,
+                    "num_regions": len(self.region_scores) if self.region_scores else 0,
+                } if self.region_scores else None,
+                "has_attention_map": self.attention_map is not None,
+            }
+        
+        return result
 
 
 class InferenceEngine:
@@ -71,6 +155,7 @@ class InferenceEngine:
     Unified inference engine supporting multiple model formats.
     
     Provides a consistent interface regardless of underlying model format.
+    Includes Phase 3 integration for advanced capabilities.
     """
     
     # Class name mapping - ORDER MUST MATCH ImageFolder alphabetical sorting!
@@ -94,6 +179,8 @@ class InferenceEngine:
         default_format: str = "onnx",
         device: str = "auto",
         class_names: Optional[List[str]] = None,
+        enable_phase3: bool = True,
+        phase3_mode: str = "inference",
     ):
         """
         Initialize inference engine.
@@ -103,6 +190,8 @@ class InferenceEngine:
             default_format: Default model format to use
             device: Device for inference (auto, cpu, cuda)
             class_names: List of class names
+            enable_phase3: Whether to enable Phase 3 capabilities
+            phase3_mode: Phase 3 mode ("inference", "evaluation", "full")
         """
         if not NUMPY_AVAILABLE:
             raise ImportError("NumPy is required for inference")
@@ -111,6 +200,14 @@ class InferenceEngine:
         self.default_format = default_format
         self.device = device
         self.class_names = class_names or self.CLASS_NAMES
+        
+        # Phase 3 integration
+        self._phase3_enabled = False
+        self._phase3_manager = None
+        self._phase3_wrapper = None
+        
+        if enable_phase3 and PHASE3_AVAILABLE:
+            self._initialize_phase3(phase3_mode)
         
         # Initialize loader and registry
         self.loader = get_model_loader(
@@ -125,6 +222,98 @@ class InferenceEngine:
         # Track loaded model
         self._current_model: Optional[str] = None
         self._current_format: Optional[str] = None
+    
+    @property
+    def model_format(self) -> str:
+        """Return current model format (for API compatibility)."""
+        return self._current_format or self.default_format
+    
+    def _initialize_phase3(self, mode: str = "inference"):
+        """Initialize Phase 3 capabilities."""
+        if not PHASE3_AVAILABLE:
+            return
+        
+        try:
+            mode_map = {
+                "inference": Phase3ProductionMode.INFERENCE,
+                "evaluation": Phase3ProductionMode.EVALUATION,
+                "full": Phase3ProductionMode.FULL,
+                "minimal": Phase3ProductionMode.MINIMAL,
+            }
+            p3_mode = mode_map.get(mode, Phase3ProductionMode.INFERENCE)
+            
+            self._phase3_manager = enable_phase3(p3_mode)
+            if self._phase3_manager:
+                self._phase3_enabled = True
+                logger.info(f"Phase 3 enabled: {mode} mode")
+        except Exception as e:
+            logger.warning(f"Phase 3 initialization failed: {e}")
+            self._phase3_enabled = False
+    
+    def _run_phase3_inference(
+        self,
+        model: Any,
+        image_tensor: Any,
+        logits: Any,
+        predicted_class: int
+    ) -> Optional[Dict[str, Any]]:
+        """Run Phase 3 inference if enabled."""
+        if not self._phase3_enabled or not self._phase3_manager:
+            return None
+        
+        try:
+            result = self._phase3_manager.run_inference(
+                model, image_tensor, logits, predicted_class
+            )
+            
+            if result.is_empty():
+                return None
+            
+            # Convert to dict format expected by routers.py
+            phase3_dict = {
+                "executed": result.phase3_executed,
+                "processing_time_ms": result.execution_time_ms,
+                "had_failure": result.had_failure,
+                "error": result.failure_message if result.had_failure else None,
+            }
+            
+            # Regions - convert to list format
+            if not result.regions.is_empty():
+                regions_list = []
+                # Build regions with relevance scores if available
+                if not result.relevance_scores.is_empty():
+                    for region_id, score in result.relevance_scores.region_scores.items():
+                        regions_list.append({
+                            "region_id": region_id,
+                            "relevance_score": float(score),
+                            "bbox": None,  # Phase 3 grid doesn't provide bbox
+                            "label": None,
+                        })
+                    phase3_dict["regions"] = regions_list
+                    phase3_dict["top_region_score"] = max(
+                        result.relevance_scores.region_scores.values()
+                    ) if result.relevance_scores.region_scores else None
+            
+            # Multi-label predictions - convert to expected format
+            if not result.multi_label.is_empty():
+                predictions = []
+                for i, label in enumerate(result.multi_label.predicted_labels):
+                    conf = result.multi_label.label_confidences[i] if i < len(result.multi_label.label_confidences) else 0.0
+                    predictions.append({
+                        "label": label,
+                        "confidence": float(conf),
+                    })
+                phase3_dict["multi_label"] = {"predictions": predictions}
+            
+            # Attention map
+            if not result.attention_map.is_empty():
+                phase3_dict["attention_map"] = result.attention_map.attention_map_base64 if hasattr(result.attention_map, 'attention_map_base64') else None
+                phase3_dict["attention_method"] = result.attention_map.generation_method
+            
+            return phase3_dict
+        except Exception as e:
+            logger.debug(f"Phase 3 inference error: {e}")
+            return None
     
     def load_model(
         self,
@@ -217,14 +406,14 @@ class InferenceEngine:
     
     def predict(
         self,
-        image: np.ndarray,
+        image: Any,  # Can be np.ndarray or bytes
         return_features: bool = False,
     ) -> InferenceResult:
         """
         Run inference on a single image.
         
         Args:
-            image: Input image as numpy array (H, W, C) in RGB, 0-255 or 0-1
+            image: Input image as numpy array (H, W, C), bytes, or PIL Image
             return_features: Whether to return feature vectors
             
         Returns:
@@ -233,7 +422,7 @@ class InferenceEngine:
         try:
             engine, info = self._get_engine()
             
-            # Run inference
+            # Run inference (underlying engine handles bytes/ndarray conversion)
             result = engine.predict(image, return_features=return_features)
             
             # Build response
@@ -247,6 +436,35 @@ class InferenceEngine:
                 for i in range(len(probs))
             }
             
+            # Run Phase 3 if enabled (non-blocking)
+            phase3_result = None
+            multi_label_preds = None
+            region_scores = None
+            attention_map = None
+            
+            if self._phase3_enabled:
+                try:
+                    # Get model from engine for Phase 3
+                    model = getattr(engine, 'model', None)
+                    image_tensor = result.get("image_tensor")  # PyTorch tensor for Phase 3
+                    # Prefer tensor version of logits if available
+                    logits = result.get("logits_tensor", result.get("logits"))
+                    
+                    if model is not None and image_tensor is not None:
+                        phase3_result = self._run_phase3_inference(
+                            model, image_tensor, logits, predicted_class
+                        )
+                        
+                        if phase3_result:
+                            if phase3_result.get("multi_label"):
+                                multi_label_preds = phase3_result["multi_label"].get("predictions")
+                            if phase3_result.get("relevance_scores"):
+                                region_scores = phase3_result["relevance_scores"]
+                    else:
+                        logger.debug(f"Phase 3 skipped: model={model is not None}, tensor={image_tensor is not None}")
+                except Exception as p3_err:
+                    logger.debug(f"Phase 3 post-processing skipped: {p3_err}")
+            
             return InferenceResult(
                 success=True,
                 predicted_class=predicted_class,
@@ -259,6 +477,11 @@ class InferenceEngine:
                 model_name=info.name,
                 model_format=info.format.value,
                 device=info.device,
+                phase3_enabled=self._phase3_enabled,
+                phase3_result=phase3_result,
+                multi_label_predictions=multi_label_preds,
+                region_scores=region_scores,
+                attention_map=attention_map,
             )
             
         except Exception as e:

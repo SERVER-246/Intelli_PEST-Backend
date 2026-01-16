@@ -91,8 +91,8 @@ def parse_apk_timestamp(filename: str) -> Optional[datetime]:
 
 def timestamp_to_version(dt: datetime) -> str:
     """Convert timestamp to semantic version."""
-    # Format: YYYY.MMDD.HHMM (e.g., 2026.0109.1430)
-    return f"{dt.year}.{dt.month:02d}{dt.day:02d}.{dt.hour:02d}{dt.minute:02d}"
+    # Format: YYYY.MMDD (e.g., 2026.0116) - matches Android app versionName format
+    return f"{dt.year}.{dt.month:02d}{dt.day:02d}"
 
 
 def get_latest_apk() -> Optional[dict]:
@@ -136,6 +136,54 @@ def get_latest_apk() -> Optional[dict]:
         "file_size": file_size,
         "file_size_mb": file_size_mb,
     }
+
+
+def compare_versions(v1: str, v2: str) -> int:
+    """
+    Compare two version strings.
+    
+    Supports formats:
+    - Semantic: "1.0.0", "1.2.3"
+    - Date-based: "2026.0109.1430"
+    
+    Returns:
+        -1 if v1 < v2
+         0 if v1 == v2
+         1 if v1 > v2
+    """
+    # Normalize versions by replacing dashes with dots
+    parts1 = v1.replace("-", ".").split(".")
+    parts2 = v2.replace("-", ".").split(".")
+    
+    # Convert to integers for comparison
+    nums1 = []
+    nums2 = []
+    
+    for p in parts1:
+        try:
+            nums1.append(int(p))
+        except ValueError:
+            nums1.append(0)
+    
+    for p in parts2:
+        try:
+            nums2.append(int(p))
+        except ValueError:
+            nums2.append(0)
+    
+    # Pad shorter list with zeros
+    max_len = max(len(nums1), len(nums2))
+    nums1.extend([0] * (max_len - len(nums1)))
+    nums2.extend([0] * (max_len - len(nums2)))
+    
+    # Compare element by element
+    for n1, n2 in zip(nums1, nums2):
+        if n1 < n2:
+            return -1
+        elif n1 > n2:
+            return 1
+    
+    return 0
 
 
 def get_model_info() -> dict:
@@ -185,12 +233,15 @@ def get_model_info() -> dict:
 # =============================================================================
 
 @app_router.get("/version", response_model=AppVersionResponse)
-async def get_app_version():
+async def get_app_version(client_version: Optional[str] = None):
     """
     Get latest app version information.
     
     Returns the latest APK version, download URL, and whether update is forced.
     The app should call this on startup to check for updates.
+    
+    Args:
+        client_version: The current version installed on the client (optional query param)
     """
     latest = get_latest_apk()
     
@@ -206,6 +257,19 @@ async def get_app_version():
     # Build download URL (relative, will be accessed via same server)
     download_url = f"/api/app/download/{latest['filename']}"
     
+    # Determine if force update is needed by comparing versions
+    # Only force update if there's actually a newer version available
+    force_update = False
+    if client_version:
+        # Compare client version with server's latest version
+        # Any version older than server's latest will trigger force update
+        force_update = compare_versions(client_version, latest["version"]) < 0
+        logger.info(f"Version check: client={client_version}, server={latest['version']}, force_update={force_update}")
+    else:
+        # No client_version = legacy APK that doesn't send version
+        logger.warning("No client_version provided - legacy APK detected, forcing update")
+        force_update = True
+    
     return AppVersionResponse(
         status="success",
         latest_version=latest["version"],
@@ -213,7 +277,7 @@ async def get_app_version():
         download_url=download_url,
         filename=latest["filename"],
         file_size_mb=latest["file_size_mb"],
-        force_update=True,  # Always force update to latest version
+        force_update=force_update,
         release_notes=None,  # Could be loaded from a notes file if needed
     )
 

@@ -48,9 +48,9 @@ logger = logging.getLogger(__name__)
 
 # Import shared training utilities for Ghost-alignment
 # Note: training_utils provides standardized kd_loss with proper class mismatch handling
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'black_ops_training'))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'black_ops_training'))
 try:
-    from training_utils import (
+    from training_utils import (  # pyright: ignore
         kd_loss as ghost_kd_loss,
         extract_logits,
         BatchConfig,
@@ -68,13 +68,47 @@ try:
         ExitCode,
         get_teacher_lr_multiplier,
         PerTeacherConfig,
+        # Phase 2: LwF + Memory Replay
+        LwFLoss,
+        MemoryReplayBuffer,
+        CombinedAntiForgetLoss,
+        FeatureNaNRegulator,
+        LWF_AVAILABLE,
+        NAN_REGULATOR_AVAILABLE,
+        # Phase 2: Report and Archival
+        ReportGenerator,
+        RunArchiver,
+        RunComparator,
+        ExperimentTracker,
+        BatchProbeCache,
+        # Canonical class names (Phase 3 compatibility)
+        CANONICAL_CLASSES,
+        CANONICAL_CLASSES_WITH_JUNK,
+        STUDENT_NUM_CLASSES,
+        TEACHER_NUM_CLASSES,
     )
     TRAINING_UTILS_AVAILABLE = True
 except ImportError:
     TRAINING_UTILS_AVAILABLE = False
+    LWF_AVAILABLE = False
+    NAN_REGULATOR_AVAILABLE = False
     MIN_KEY_LOAD_RATIO = 0.80
     MIN_VALID_TEACHERS = 8
+    STUDENT_NUM_CLASSES = 12  # 11 pests + junk
+    TEACHER_NUM_CLASSES = 11
     logger.warning("training_utils not available, using local implementations")
+
+# Phase 3 Integration (Optional - gracefully disabled if unavailable)
+try:
+    from phase3_enabled_config import (  # pyright: ignore
+        Phase3ProductionMode,
+        enable_phase3,
+        get_phase3_status,
+    )
+    from phase3_integration import initialize_phase3  # pyright: ignore
+    PHASE3_AVAILABLE = True
+except ImportError:
+    PHASE3_AVAILABLE = False
 
 # Lazy imports
 TORCH_AVAILABLE = False
@@ -199,6 +233,55 @@ class ComprehensiveTrainingConfig:
         "termite",
     ])
     include_junk_class: bool = True
+    
+    # ============================================================
+    # Phase 2: LwF + Memory Replay (Replaces EWC)
+    # ============================================================
+    use_lwf: bool = True  # Learning without Forgetting - soft target retention
+    lwf_temperature: float = 2.0  # Temperature for soft targets
+    lwf_alpha: float = 0.5  # Weight for LwF loss (0.5 = equal with task loss)
+    
+    memory_buffer_size: int = 1000  # Reservoir sampling buffer
+    use_memory_replay: bool = True  # Enable memory replay
+    replay_batch_fraction: float = 0.3  # 30% of batch from memory
+    
+    # ============================================================
+    # Phase 2: Soft NaN Regulation
+    # ============================================================
+    use_nan_regulation: bool = True  # Soft feature strength regulation
+    nan_regulation_features: List[str] = field(default_factory=lambda: [
+        'mixup', 'cutmix', 'label_smoothing', 'grad_accum', 'dynamic_temp'
+    ])
+    
+    # ============================================================
+    # Phase 2: Reports (JSON, MD, HTML)
+    # ============================================================
+    generate_json_report: bool = True
+    generate_markdown_report: bool = True
+    generate_html_report: bool = True
+    reports_dir: str = "./model_backups/reports"
+    
+    # ============================================================
+    # Phase 2: Run Archival
+    # ============================================================
+    archive_runs: bool = True
+    runs_archive_dir: str = "./model_backups/runs"
+    
+    # ============================================================
+    # Phase 2: Auto-Deployment
+    # ============================================================
+    auto_deploy: bool = False  # Disabled by default for comprehensive trainer
+    deployment_backup_dir: str = "./model_backups/deployment_history"
+    max_deployment_backups: int = 10
+    
+    # ============================================================
+    # Phase 2: Feature Disable Flags (for debugging/ablation)
+    # ============================================================
+    disable_mixup: bool = False
+    disable_cutmix: bool = False
+    disable_label_smoothing: bool = False
+    disable_lwf: bool = False
+    disable_memory_replay: bool = False
 
 
 @dataclass
@@ -1102,7 +1185,7 @@ class ComprehensiveTrainer:
             # Detect number of classes from checkpoint's classifier layer
             # This is critical - the checkpoint may have 11 or 12 classes depending on whether
             # it was trained with the junk class
-            checkpoint_num_classes = 11  # Default fallback
+            checkpoint_num_classes = 12  # Default fallback (11 pests + junk)
             classifier_weight = state_dict.get('classifier.6.weight')
             if classifier_weight is not None:
                 checkpoint_num_classes = classifier_weight.shape[0]

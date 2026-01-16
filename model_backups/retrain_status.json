@@ -1,11 +1,11 @@
 {
-  "last_trained": "2026-01-08T17:22:25.426447",
-  "last_backup_path": "model_backups\\student_model_rotation_robust_backup_20260108_161437.pt",
+  "last_trained": "2026-01-15T19:00:26.136397",
+  "last_backup_path": "model_backups\\student_model_12class_proper_backup_20260115_154658.pt",
   "version_major": 1,
   "version_minor": 0,
-  "version_patch": 1,
-  "current_version_string": "v1.0.1",
-  "total_fine_tunes": 1,
+  "version_patch": 6,
+  "current_version_string": "v1.0.6",
+  "total_fine_tunes": 6,
   "total_comprehensive": 0,
-  "updated_at": "2026-01-08T17:22:25.426447"
+  "updated_at": "2026-01-15T19:00:26.136397"
 }

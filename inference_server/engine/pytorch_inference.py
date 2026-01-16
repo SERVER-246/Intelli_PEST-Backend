@@ -351,6 +351,9 @@ class PyTorchInference:
             "class_name": class_name,
             "confidence": float(confidence.item()),
             "inference_time_ms": inference_time,
+            # Phase 3 support: include tensor for feature extraction
+            "image_tensor": tensor,  # Keep as torch tensor for Phase 3
+            "logits_tensor": logits,  # Keep tensor for Phase 3 multi-label
         }
         
         if features is not None:

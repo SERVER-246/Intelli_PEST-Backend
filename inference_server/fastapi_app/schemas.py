@@ -73,12 +73,64 @@ class ValidationInfo(BaseModel):
     quality_score: Optional[float] = Field(None, description="Image quality score")
 
 
+# ============================================================
+# Phase 3: Experimental Features (Attention Maps, Regions, Multi-Label)
+# ============================================================
+
+class Phase3RegionInfo(BaseModel):
+    """Region of interest information from Phase 3 analysis."""
+    region_id: int = Field(..., description="Region identifier")
+    bbox: Optional[List[float]] = Field(None, description="Bounding box [x1, y1, x2, y2] normalized 0-1")
+    relevance_score: float = Field(..., ge=0, le=1, description="Region relevance score")
+    label: Optional[str] = Field(None, description="Region label if identified")
+
+
+class Phase3MultiLabelPrediction(BaseModel):
+    """Multi-label prediction from Phase 3."""
+    label: str = Field(..., description="Predicted label")
+    confidence: float = Field(..., ge=0, le=1, description="Confidence score")
+
+
+class Phase3AttentionInfo(BaseModel):
+    """Attention map information from Phase 3."""
+    available: bool = Field(False, description="Whether attention map is available")
+    map_uri: Optional[str] = Field(None, description="URI to attention map image (base64 or URL)")
+    method: Optional[str] = Field(None, description="Attention extraction method (e.g., 'grad_cam', 'attention')")
+
+
+class Phase3Response(BaseModel):
+    """
+    Phase 3 experimental features response.
+    
+    These features are EXPERIMENTAL and may change.
+    The main prediction should always be trusted over Phase 3 outputs.
+    """
+    is_experimental: bool = Field(True, description="Flag indicating these are experimental features")
+    executed: bool = Field(False, description="Whether Phase 3 analysis was executed")
+    
+    # Attention Maps
+    attention: Optional[Phase3AttentionInfo] = Field(None, description="Attention map information")
+    
+    # Region Analysis
+    regions: Optional[List[Phase3RegionInfo]] = Field(None, description="Regions of interest")
+    top_region_score: Optional[float] = Field(None, description="Highest region relevance score")
+    
+    # Multi-Label Predictions
+    multi_label: Optional[List[Phase3MultiLabelPrediction]] = Field(None, description="Multi-label predictions")
+    
+    # Metadata
+    processing_time_ms: Optional[float] = Field(None, description="Phase 3 processing time")
+    error: Optional[str] = Field(None, description="Error message if Phase 3 failed")
+
+
 class PredictionResponse(BaseResponse):
     """Single prediction response."""
     prediction: PredictionResult
     inference: InferenceInfo
     validation: Optional[ValidationInfo] = None
     feedback_id: Optional[str] = Field(None, description="ID to submit feedback on this prediction")
+    # Phase 3: Experimental features (nullable - missing means Phase 3 not enabled/available)
+    phase3: Optional[Phase3Response] = Field(None, description="Phase 3 experimental features (attention maps, regions, multi-label)")
 
 
 # Batch Prediction Models

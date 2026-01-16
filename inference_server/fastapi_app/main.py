@@ -128,7 +128,7 @@ def create_app(
             from ..engine.pytorch_inference import PyTorchInference
             from pathlib import Path
             
-            # Load PyTorch model directly
+            # Load PyTorch model directly (handles state dict reconstruction)
             inference_engine = PyTorchInference(
                 model_path=Path(model_path),
                 device="cuda" if model_format != "cpu" else "cpu",
@@ -136,6 +136,31 @@ def create_app(
             set_inference_engine(inference_engine)
             logger.info(f"Inference engine loaded: {model_path}")
             
+            # Initialize Phase 3 separately for router-level integration
+            try:
+                import sys
+                # Add black_ops_training to path for Phase 3 imports
+                black_ops_dir = Path(__file__).parent.parent.parent / "black_ops_training"
+                logger.info(f"Looking for Phase 3 at: {black_ops_dir}")
+                
+                if black_ops_dir.exists():
+                    if str(black_ops_dir) not in sys.path:
+                        sys.path.insert(0, str(black_ops_dir))
+                    
+                    from phase3_enabled_config import enable_phase3, Phase3ProductionMode
+                    phase3_manager = enable_phase3(Phase3ProductionMode.INFERENCE)
+                    
+                    # Store Phase 3 manager in app state for router access
+                    from . import dependencies
+                    dependencies._phase3_manager = phase3_manager
+                    logger.info(f"Phase 3 initialized: manager operational = {phase3_manager.is_operational()}")
+                else:
+                    logger.warning(f"Phase 3 directory not found: {black_ops_dir}")
+            except Exception as p3_err:
+                import traceback
+                logger.warning(f"Phase 3 initialization failed (continuing without): {p3_err}")
+                traceback.print_exc()
+                
         except Exception as e:
             logger.error(f"Failed to load inference engine: {e}")
             import traceback

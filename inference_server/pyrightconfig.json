@@ -1,0 +1,15 @@
+{
+    "include": [
+        ".",
+        "engine",
+        "training"
+    ],
+    "extraPaths": [
+        ".",
+        "D:/Intelli_PEST-Backend/black_ops_training",
+        "D:/Intelli_PEST-Backend/black_ops_training/src"
+    ],
+    "pythonVersion": "3.10",
+    "typeCheckingMode": "basic",
+    "reportMissingImports": "warning"
+}

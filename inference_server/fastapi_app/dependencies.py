@@ -18,6 +18,7 @@ _inference_engine = None
 _validation_pipeline = None
 _api_key_manager = None
 _settings = None
+_phase3_manager = None  # Phase 3 integration manager
 
 
 def set_inference_engine(engine):
@@ -42,6 +43,11 @@ def set_settings(settings):
     """Set global settings."""
     global _settings
     _settings = settings
+
+
+def get_phase3_manager():
+    """Get the Phase 3 integration manager (may be None)."""
+    return _phase3_manager
 
 
 # API Key Header

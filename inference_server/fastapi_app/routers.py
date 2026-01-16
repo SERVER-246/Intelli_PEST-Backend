@@ -16,6 +16,7 @@ from .dependencies import (
     get_optional_inference_engine,
     get_validation_pipeline,
     get_api_key_manager,
+    get_phase3_manager,
     verify_api_key,
     check_rate_limit,
     require_admin,
@@ -41,6 +42,11 @@ from .schemas import (
     FeedbackResponse,
     FeedbackStatsResponse,
     FeedbackRecorded,
+    # Phase 3 schemas
+    Phase3Response,
+    Phase3AttentionInfo,
+    Phase3RegionInfo,
+    Phase3MultiLabelPrediction,
 )
 from ..feedback import FeedbackManager
 from ..feedback.feedback_manager import get_feedback_manager
@@ -303,6 +309,133 @@ async def predict(
                     k: round(v, 4) for k, v in probs.items()
                 }
         
+        # Run Phase 3 analysis if available
+        phase3_data = None
+        phase3_manager = get_phase3_manager()
+        if phase3_manager and phase3_manager.is_operational():
+            try:
+                # Get tensors from result (added by pytorch_inference)
+                image_tensor = result.get("image_tensor")
+                logits_tensor = result.get("logits_tensor", result.get("logits"))
+                model = getattr(engine, 'model', None)
+                
+                if model is not None and image_tensor is not None:
+                    p3_result = phase3_manager.run_inference(
+                        model, image_tensor, logits_tensor, class_id
+                    )
+                    
+                    if not p3_result.is_empty():
+                        phase3_data = {
+                            "executed": p3_result.phase3_executed,
+                            "processing_time_ms": p3_result.execution_time_ms,
+                            "error": p3_result.failure_message if p3_result.had_failure else None,
+                        }
+                        
+                        # Add regions from p3_result.regions (not relevance_scores)
+                        if not p3_result.regions.is_empty():
+                            regions_list = []
+                            for proposal in p3_result.regions.proposals:
+                                regions_list.append({
+                                    "region_id": proposal.region_id,
+                                    "bbox": list(proposal.bbox) if proposal.bbox else None,
+                                    "relevance_score": proposal.confidence,
+                                    "label": None,
+                                })
+                            phase3_data["regions"] = regions_list
+                            phase3_data["top_region_score"] = max(r["relevance_score"] for r in regions_list) if regions_list else None
+                            
+                        # Add relevance scores if available
+                        if not p3_result.relevance_scores.is_empty():
+                            if phase3_data.get("regions"):
+                                for r in phase3_data["regions"]:
+                                    score = p3_result.relevance_scores.region_scores.get(r["region_id"], r["relevance_score"])
+                                    r["relevance_score"] = float(score)
+                                phase3_data["top_region_score"] = max(r["relevance_score"] for r in phase3_data["regions"])
+                        
+                        # Add multi-label predictions
+                        if not p3_result.multi_label.is_empty():
+                            predictions = []
+                            class_names = getattr(engine, 'class_names', None) or []
+                            for class_id in p3_result.multi_label.predicted_labels:
+                                label_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
+                                conf = p3_result.multi_label.label_confidences.get(class_id, 0.0)
+                                predictions.append({
+                                    "label": label_name,
+                                    "confidence": float(conf),
+                                })
+                            # Also add from class_probabilities if available
+                            if not predictions and p3_result.multi_label.class_probabilities:
+                                for cid, prob in sorted(p3_result.multi_label.class_probabilities.items(), 
+                                                       key=lambda x: x[1], reverse=True)[:3]:
+                                    label_name = class_names[cid] if cid < len(class_names) else f"class_{cid}"
+                                    predictions.append({
+                                        "label": label_name,
+                                        "confidence": float(prob),
+                                    })
+                            phase3_data["multi_label"] = predictions  # Direct list, not wrapped
+                        
+                        # Add attention map info
+                        if not p3_result.attention_map.is_empty():
+                            phase3_data["attention_map"] = getattr(p3_result.attention_map, 'attention_map_base64', None)
+                            phase3_data["attention_method"] = p3_result.attention_map.generation_method
+            except Exception as p3_err:
+                logger.debug(f"Phase 3 analysis skipped: {p3_err}")
+        
+        # Build Phase 3 response if available
+        phase3_response = None
+        if phase3_data and isinstance(phase3_data, dict):
+            try:
+                # Build attention info
+                attention_info = None
+                if phase3_data.get("attention_map"):
+                    attention_info = Phase3AttentionInfo(
+                        available=True,
+                        map_uri=phase3_data.get("attention_map"),
+                        method=phase3_data.get("attention_method", "grad_cam"),
+                    )
+                
+                # Build regions info
+                regions_list = None
+                if phase3_data.get("regions"):
+                    regions_list = [
+                        Phase3RegionInfo(
+                            region_id=i,
+                            bbox=r.get("bbox"),
+                            relevance_score=r.get("relevance_score", 0.0),
+                            label=r.get("label"),
+                        )
+                        for i, r in enumerate(phase3_data["regions"])
+                    ]
+                
+                # Build multi-label predictions
+                multi_label_list = None
+                if phase3_data.get("multi_label"):
+                    multi_label_list = [
+                        Phase3MultiLabelPrediction(
+                            label=p.get("label", ""),
+                            confidence=p.get("confidence", 0.0),
+                        )
+                        for p in phase3_data["multi_label"]
+                    ]
+                
+                phase3_response = Phase3Response(
+                    is_experimental=True,
+                    executed=phase3_data.get("executed", False),
+                    attention=attention_info,
+                    regions=regions_list,
+                    top_region_score=phase3_data.get("top_region_score"),
+                    multi_label=multi_label_list,
+                    processing_time_ms=phase3_data.get("processing_time_ms"),
+                    error=phase3_data.get("error"),
+                )
+            except Exception as p3_err:
+                logger.warning(f"Failed to build Phase 3 response: {p3_err}")
+                phase3_response = Phase3Response(
+                    is_experimental=True,
+                    executed=False,
+                    error=str(p3_err),
+                )
+        
         return PredictionResponse(
             status="success",
             request_id=ctx.request_id,
@@ -314,6 +447,7 @@ async def predict(
                 time_ms=round(inference_time, 2),
             ),
             feedback_id=feedback_id,
+            phase3=phase3_response,
         )
     
     except Exception as e:
@@ -364,11 +498,15 @@ async def predict_base64(
     try:
         result = engine.predict(image_bytes)
         
+        class_name = result.get("class_name", "")
+        class_id = result.get("predicted_class", -1)
+        confidence = result.get("confidence", 0.0)
+        
         prediction = PredictionResult(
             **{
-                "class": result.get("class_name", ""),
-                "class_id": result.get("predicted_class", -1),
-                "confidence": round(result.get("confidence", 0.0), 4),
+                "class": class_name,
+                "class_id": class_id,
+                "confidence": round(confidence, 4),
             }
         )
         
@@ -378,6 +516,133 @@ async def predict_base64(
                 prediction.all_probabilities = {
                     k: round(v, 4) for k, v in probs.items()
                 }
+        
+        # Run Phase 3 analysis if available
+        phase3_response = None
+        phase3_manager = get_phase3_manager()
+        if phase3_manager and phase3_manager.is_operational():
+            try:
+                # Get tensors from result (added by pytorch_inference)
+                image_tensor = result.get("image_tensor")
+                logits_tensor = result.get("logits_tensor", result.get("logits"))
+                model = getattr(engine, 'model', None)
+                
+                logger.info(f"Phase 3: model={model is not None}, image_tensor={image_tensor is not None}, logits={logits_tensor is not None}")
+                
+                if model is not None and image_tensor is not None:
+                    p3_result = phase3_manager.run_inference(
+                        model, image_tensor, logits_tensor, class_id
+                    )
+                    
+                    # Log Phase 3 result details
+                    logger.info(f"Phase 3 result: executed={p3_result.phase3_executed}, "
+                               f"features_empty={p3_result.features.is_empty()}, "
+                               f"regions_empty={p3_result.regions.is_empty()}, "
+                               f"relevance_empty={p3_result.relevance_scores.is_empty()}, "
+                               f"multi_label_empty={p3_result.multi_label.is_empty()}, "
+                               f"attention_empty={p3_result.attention_map.is_empty()}, "
+                               f"had_failure={p3_result.had_failure}, "
+                               f"failure_msg={p3_result.failure_message}")
+                    
+                    # Always build phase3_data if Phase 3 executed
+                    phase3_data = {
+                        "executed": p3_result.phase3_executed,
+                        "processing_time_ms": p3_result.execution_time_ms,
+                        "error": p3_result.failure_message if p3_result.had_failure else None,
+                    }
+                    
+                    # Add regions from p3_result.regions (not relevance_scores)
+                    if not p3_result.regions.is_empty():
+                        regions_list = []
+                        for proposal in p3_result.regions.proposals:
+                            regions_list.append({
+                                "region_id": proposal.region_id,
+                                "bbox": list(proposal.bbox) if proposal.bbox else None,
+                                "relevance_score": proposal.confidence,
+                                "label": None,
+                            })
+                        phase3_data["regions"] = regions_list
+                        phase3_data["top_region_score"] = max(r["relevance_score"] for r in regions_list) if regions_list else None
+                        
+                    # Add relevance scores if available
+                    if not p3_result.relevance_scores.is_empty():
+                        # Update region relevance scores
+                        if phase3_data.get("regions"):
+                            for r in phase3_data["regions"]:
+                                score = p3_result.relevance_scores.region_scores.get(r["region_id"], r["relevance_score"])
+                                r["relevance_score"] = float(score)
+                            phase3_data["top_region_score"] = max(r["relevance_score"] for r in phase3_data["regions"])
+                    
+                    # Add multi-label predictions - convert class IDs to labels
+                    if not p3_result.multi_label.is_empty():
+                        predictions = []
+                        class_names = getattr(engine, 'class_names', None) or []
+                        for class_id in p3_result.multi_label.predicted_labels:
+                            label_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
+                            conf = p3_result.multi_label.label_confidences.get(class_id, 0.0)
+                            predictions.append({
+                                "label": label_name,
+                                "confidence": float(conf),
+                            })
+                        # Also add from class_probabilities if available
+                        if not predictions and p3_result.multi_label.class_probabilities:
+                            for cid, prob in sorted(p3_result.multi_label.class_probabilities.items(), 
+                                                   key=lambda x: x[1], reverse=True)[:3]:
+                                label_name = class_names[cid] if cid < len(class_names) else f"class_{cid}"
+                                predictions.append({
+                                    "label": label_name,
+                                    "confidence": float(prob),
+                                })
+                        phase3_data["multi_label"] = predictions  # Direct list, not wrapped
+                    
+                    # Add attention map info
+                    if not p3_result.attention_map.is_empty():
+                        phase3_data["attention_map"] = getattr(p3_result.attention_map, 'attention_map_base64', None)
+                        phase3_data["attention_method"] = p3_result.attention_map.generation_method
+                    
+                    # Build Phase 3 response
+                    attention_info = None
+                    if phase3_data.get("attention_map"):
+                        attention_info = Phase3AttentionInfo(
+                            available=True,
+                            map_uri=phase3_data.get("attention_map"),
+                            method=phase3_data.get("attention_method", "grad_cam"),
+                        )
+                    
+                    regions_info = None
+                    if phase3_data.get("regions"):
+                        regions_info = [
+                            Phase3RegionInfo(
+                                region_id=i,
+                                bbox=r.get("bbox"),
+                                relevance_score=r.get("relevance_score", 0.0),
+                                label=r.get("label"),
+                            )
+                            for i, r in enumerate(phase3_data["regions"])
+                        ]
+                    
+                    multi_label_list = None
+                    if phase3_data.get("multi_label"):
+                        multi_label_list = [
+                            Phase3MultiLabelPrediction(
+                                label=p.get("label", ""),
+                                confidence=p.get("confidence", 0.0),
+                            )
+                            for p in phase3_data["multi_label"]
+                        ]
+                    
+                    phase3_response = Phase3Response(
+                        is_experimental=True,
+                        executed=phase3_data.get("executed", False),
+                        attention=attention_info,
+                        regions=regions_info,
+                        top_region_score=phase3_data.get("top_region_score"),
+                        multi_label=multi_label_list,
+                        processing_time_ms=phase3_data.get("processing_time_ms"),
+                        error=phase3_data.get("error"),
+                    )
+            except Exception as p3_err:
+                logger.debug(f"Phase 3 analysis skipped: {p3_err}")
         
         return PredictionResponse(
             status="success",
@@ -389,6 +654,7 @@ async def predict_base64(
                 device=engine.device,
                 time_ms=round(ctx.elapsed_ms, 2),
             ),
+            phase3=phase3_response,
         )
     
     except Exception as e:
@@ -928,8 +1194,9 @@ async def get_retrain_status(
             "status": "success",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "model": {
-                "version": status.current_version,
-                "total_retrains": status.total_retrains,
+                "version": status.current_version_string,
+                "total_fine_tunes": status.total_fine_tunes,
+                "total_comprehensive": status.total_comprehensive,
             },
             "retraining": {
                 "is_training": status.is_training,

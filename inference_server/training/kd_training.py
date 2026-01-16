@@ -395,12 +395,16 @@ class TeacherEnsemble:
         """
         Generate weighted soft labels from all teachers.
         
+        Ghost-aligned approach: Returns soft labels with TEACHER class count (typically 11).
+        The KnowledgeDistillationLoss will slice student logits to match.
+        This preserves teacher knowledge integrity without artificial padding.
+        
         Args:
             images: Input images (B, C, H, W) as torch tensor
             temperature: Temperature for softmax (default from config)
             
         Returns:
-            Soft labels as torch tensor (B, num_classes)
+            Soft labels as torch tensor (B, teacher_classes) - typically 11 classes
         """
         if temperature is None:
             temperature = self.config.temperature
@@ -408,8 +412,12 @@ class TeacherEnsemble:
         batch_size = images.shape[0]
         device = images.device
         
-        # Accumulate weighted soft labels
-        weighted_sum = torch.zeros(batch_size, self.num_classes, device=device)
+        # Ghost-aligned: Use teacher class count (11) not student count (12)
+        # This avoids padding and keeps teacher knowledge pure
+        teacher_class_count = 11  # Standard ONNX teacher class count
+        
+        # Accumulate weighted soft labels at teacher dimension
+        weighted_sum = torch.zeros(batch_size, teacher_class_count, device=device)
         
         # Convert to numpy for ONNX inference
         images_np = images.cpu().numpy()
@@ -435,24 +443,26 @@ class TeacherEnsemble:
                     logits_tensor = torch.from_numpy(logits).float().to(device)
                     teacher_classes = logits_tensor.shape[1]
                     
-                    # Handle class count mismatch (ONNX teachers have 11, student may have 12 with junk)
-                    if teacher_classes < self.num_classes:
-                        # Pad with low logit values for extra classes (junk)
-                        # -10.0 gives very low probability after softmax (~0.00005)
-                        # This means "teachers don't know about junk class"
-                        padding = torch.full(
-                            (batch_size, self.num_classes - teacher_classes),
-                            fill_value=-10.0,
-                            device=device
-                        )
-                        logits_tensor = torch.cat([logits_tensor, padding], dim=1)
-                    elif teacher_classes > self.num_classes:
+                    # Ghost-aligned approach: DO NOT PAD
+                    # Return soft labels with teacher's class count (typically 11)
+                    # The KnowledgeDistillationLoss will slice student logits to match
+                    # This preserves the integrity of teacher knowledge without artificial padding
+                    if teacher_classes > self.num_classes:
                         # Truncate if teacher has more classes (shouldn't happen)
                         logger.warning(f"Teacher {name} has {teacher_classes} classes > student {self.num_classes}, truncating")
                         logits_tensor = logits_tensor[:, :self.num_classes]
                     
                     soft_probs = F.softmax(logits_tensor / temperature, dim=1)
-                    weighted_sum += soft_probs * weight
+                    
+                    # Accumulate at teacher class count dimension
+                    # If teacher matches expected count, add directly
+                    actual_teacher_classes = soft_probs.shape[1]
+                    if actual_teacher_classes == teacher_class_count:
+                        weighted_sum += soft_probs * weight
+                    elif actual_teacher_classes < teacher_class_count:
+                        weighted_sum[:, :actual_teacher_classes] += soft_probs * weight
+                    else:
+                        weighted_sum += soft_probs[:, :teacher_class_count] * weight
         
         # Get prediction from PyTorch teacher (deployed student)
         if self.pytorch_teacher is not None and self.pytorch_teacher.is_loaded():
@@ -460,31 +470,31 @@ class TeacherEnsemble:
             if logits is not None:
                 teacher_classes = logits.shape[1]
                 
-                # Handle class count mismatch
-                # Note: deployed student may have been expanded to 12 classes before being copied
-                if teacher_classes < self.num_classes:
-                    # Pad if PyTorch teacher has fewer classes
-                    padding = torch.full(
-                        (batch_size, self.num_classes - teacher_classes),
-                        fill_value=-10.0,
-                        device=device
-                    )
-                    logits = torch.cat([logits, padding], dim=1)
-                elif teacher_classes > self.num_classes:
+                # Ghost-aligned approach: DO NOT PAD
+                # Handle class count mismatch by NOT padding
+                if teacher_classes > self.num_classes:
                     # Truncate if teacher has more classes
                     logger.warning(f"PyTorch teacher has {teacher_classes} classes > student {self.num_classes}, truncating")
                     logits = logits[:, :self.num_classes]
-                # If teacher_classes == self.num_classes, no adjustment needed
+                    teacher_classes = self.num_classes
                 
                 soft_probs = F.softmax(logits / temperature, dim=1)
-                weighted_sum += soft_probs * self.pytorch_teacher.weight
+                
+                # Accumulate at teacher class count dimension
+                actual_teacher_classes = soft_probs.shape[1]
+                if actual_teacher_classes == teacher_class_count:
+                    weighted_sum += soft_probs * self.pytorch_teacher.weight
+                elif actual_teacher_classes < teacher_class_count:
+                    weighted_sum[:, :actual_teacher_classes] += soft_probs * self.pytorch_teacher.weight
+                else:
+                    weighted_sum += soft_probs[:, :teacher_class_count] * self.pytorch_teacher.weight
         
         # Normalize by total weight
         if self.total_weight > 0:
             soft_labels = weighted_sum / self.total_weight
         else:
             # Fallback to uniform if no teachers loaded
-            soft_labels = torch.ones(batch_size, self.num_classes, device=device) / self.num_classes
+            soft_labels = torch.ones(batch_size, teacher_class_count, device=device) / teacher_class_count
         
         return soft_labels
     
@@ -558,31 +568,28 @@ class KnowledgeDistillationLoss(nn.Module):
         student_classes = student_logits.shape[1]
         teacher_classes = teacher_soft_labels.shape[1]
         
-        # SAFETY CHECK: Ensure dimensions match
+        # Ghost-aligned KD loss handling for class mismatch:
+        # SLICE student logits to match teacher class count (NO PADDING)
+        # This ensures KD loss only applies to shared classes.
+        # Extra classes (e.g., "junk") are learned purely from hard labels (CE loss).
+        student_logits_for_kd = student_logits
         if student_classes != teacher_classes:
-            # This shouldn't happen if TeacherEnsemble.get_soft_labels() works correctly
-            # But handle it gracefully just in case
-            if teacher_classes < student_classes:
-                # Pad teacher soft labels with small probability for extra classes
-                padding = torch.full(
-                    (teacher_soft_labels.shape[0], student_classes - teacher_classes),
-                    fill_value=1e-8,
-                    device=teacher_soft_labels.device
-                )
-                teacher_soft_labels = torch.cat([teacher_soft_labels, padding], dim=1)
-                teacher_soft_labels = teacher_soft_labels / teacher_soft_labels.sum(dim=1, keepdim=True)
+            if student_classes > teacher_classes:
+                # SLICE student logits to match teacher (Ghost-aligned approach)
+                student_logits_for_kd = student_logits[:, :teacher_classes]
+                # Note: CE loss uses full student_logits, KD loss uses sliced version
             else:
-                # Truncate teacher soft labels (shouldn't happen)
+                # Student has fewer classes than teacher - slice teacher soft labels
                 teacher_soft_labels = teacher_soft_labels[:, :student_classes]
                 teacher_soft_labels = teacher_soft_labels / teacher_soft_labels.sum(dim=1, keepdim=True)
-            logger.warning(f"KD Loss dimension mismatch fixed: teacher {teacher_classes} -> student {student_classes}")
+            logger.debug(f"KD Loss class alignment: student {student_classes}, teacher {teacher_classes}")
         
-        # Hard label loss (standard cross-entropy)
+        # Hard label loss (standard cross-entropy) - uses FULL student logits
         ce_loss = self.ce_loss(student_logits, hard_labels)
         
-        # Soft label loss (KL divergence)
-        # Temperature-scaled student softmax
-        student_soft = F.log_softmax(student_logits / self.temperature, dim=1)
+        # Soft label loss (KL divergence) - uses SLICED student logits for shared classes only
+        # Temperature-scaled student softmax on shared classes
+        student_soft = F.log_softmax(student_logits_for_kd / self.temperature, dim=1)
         
         # Ensure teacher soft labels are valid probabilities (no zeros for log stability)
         teacher_soft_labels = teacher_soft_labels.clamp(min=1e-8)

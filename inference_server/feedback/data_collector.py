@@ -197,6 +197,9 @@ class DataCollector:
             self._metadata_cache[image_hash] = metadata
             self._save_metadata(metadata)
         
+        # Also save to database for persistent storage
+        self._save_to_database(metadata)
+        
         logger.info(f"Collected image: {image_hash} -> {save_dir}/{filename}, metadata cached: {image_hash in self._metadata_cache}")
         return image_hash
     
@@ -342,6 +345,17 @@ class DataCollector:
                     stats["by_class"][class_name]["corrected"] += 1
             
             return stats
+    
+    def _save_to_database(self, metadata: ImageMetadata):
+        """Save metadata to SQLite database for persistent storage."""
+        try:
+            from .database import get_database_manager
+            db = get_database_manager()
+            if db:
+                db.save_image_metadata(metadata.to_dict())
+                logger.debug(f"Saved metadata to database: {metadata.image_hash}")
+        except Exception as e:
+            logger.error(f"Failed to save metadata to database: {e}")
     
     def _save_metadata(self, metadata: ImageMetadata):
         """Save metadata to JSON file."""

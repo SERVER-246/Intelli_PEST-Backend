@@ -44,6 +44,53 @@ try:
 except ImportError:
     pass
 
+# Import shared training utilities for Phase 2
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'black_ops_training'))
+try:
+    from training_utils import (  # pyright: ignore
+        # Phase 2: LwF + Memory Replay
+        LwFLoss,
+        MemoryReplayBuffer,
+        CombinedAntiForgetLoss,
+        FeatureNaNRegulator,
+        LWF_AVAILABLE,
+        NAN_REGULATOR_AVAILABLE,
+        # Phase 2: Report and Archival
+        ReportGenerator,
+        RunArchiver,
+        RunComparator,
+        ExperimentTracker,
+        BatchProbeCache,
+        VALIDATION_ANGLES,
+        # Canonical class names (Phase 3 compatibility)
+        CANONICAL_CLASSES,
+        CANONICAL_CLASSES_WITH_JUNK,
+        STUDENT_NUM_CLASSES,
+        TEACHER_NUM_CLASSES,
+    )
+    TRAINING_UTILS_AVAILABLE = True
+except ImportError:
+    TRAINING_UTILS_AVAILABLE = False
+    LWF_AVAILABLE = False
+    NAN_REGULATOR_AVAILABLE = False
+    VALIDATION_ANGLES = list(range(0, 360, 15))
+    STUDENT_NUM_CLASSES = 12  # 11 pests + junk
+    TEACHER_NUM_CLASSES = 11
+    logger.warning("training_utils not available, using local implementations")
+
+# Phase 3 Integration (Optional - gracefully disabled if unavailable)
+try:
+    from phase3_enabled_config import (  # pyright: ignore
+        Phase3ProductionMode,
+        enable_phase3,
+        get_phase3_status,
+    )
+    from phase3_integration import initialize_phase3  # pyright: ignore
+    PHASE3_AVAILABLE = True
+except ImportError:
+    PHASE3_AVAILABLE = False
+
 
 @dataclass
 class RetrainingConfig:
@@ -72,12 +119,14 @@ class RetrainingConfig:
     epochs_per_teacher: int = 25  # Epochs to train with each teacher (total = epochs_per_teacher * num_teachers)
     
     # Elastic Weight Consolidation (prevents catastrophic forgetting)
-    use_ewc: bool = True
-    ewc_lambda: float = 100.0  # Reduced from 500 to prevent explosion (matching rotation script)
-    max_ewc_loss: float = 1.0  # Clamp EWC loss to prevent dominating training
+    # WARNING: EWC can cause NaN loss explosion after many epochs - disabled by default
+    # If re-enabling, keep ewc_lambda: 10.0 and max_ewc_loss: 0.1
+    use_ewc: bool = False  # Disabled - was causing NaN loss in ghost training
+    ewc_lambda: float = 10.0  # Reduced from 100 to prevent explosion
+    max_ewc_loss: float = 0.1  # Reduced from 1.0 - prevents EWC from dominating
     
     # Gradient clipping (CRITICAL - prevents exploding gradients)
-    gradient_clip_norm: float = 1.0
+    gradient_clip_norm: float = 0.5  # Reduced from 1.0 for stability
     
     # Learning rate schedule
     use_cosine_schedule: bool = True
@@ -111,6 +160,51 @@ class RetrainingConfig:
     # Mixed precision (matching training)
     use_amp: bool = True
     
+    # ============================================================
+    # Phase 2: LwF + Memory Replay (Replaces EWC)
+    # ============================================================
+    use_lwf: bool = True  # Learning without Forgetting - soft target retention
+    lwf_temperature: float = 2.0  # Temperature for soft targets
+    lwf_alpha: float = 0.5  # Weight for LwF loss
+    
+    memory_buffer_size: int = 1000  # Reservoir sampling buffer
+    use_memory_replay: bool = True  # Enable memory replay
+    replay_batch_fraction: float = 0.3  # 30% of batch from memory
+    
+    # ============================================================
+    # Phase 2: Soft NaN Regulation
+    # ============================================================
+    use_nan_regulation: bool = True  # Soft feature strength regulation
+    
+    # ============================================================
+    # Phase 2: Reports
+    # ============================================================
+    generate_json_report: bool = True
+    generate_markdown_report: bool = True
+    generate_html_report: bool = True
+    reports_dir: str = "./model_backups/reports"
+    
+    # ============================================================
+    # Phase 2: Run Archival
+    # ============================================================
+    archive_runs: bool = True
+    runs_archive_dir: str = "./model_backups/runs"
+    
+    # ============================================================
+    # Phase 2: Auto-Deployment
+    # ============================================================
+    auto_deploy: bool = True  # Enabled by default for retrain manager
+    deployment_backup_dir: str = "./model_backups/deployment_history"
+    max_deployment_backups: int = 10
+    
+    # ============================================================
+    # Phase 2: Feature Disable Flags
+    # ============================================================
+    disable_mixup: bool = False
+    disable_cutmix: bool = False
+    disable_lwf: bool = False
+    disable_memory_replay: bool = False
+
 
 @dataclass
 class RetrainingHistory:
@@ -196,18 +290,25 @@ class RetrainingStatus:
         Check if thresholds are met for retraining.
         
         Requirements:
-        1. Either per-class threshold OR total threshold met
+        1. Either per-class threshold (ALL classes have >= threshold) OR total threshold met
         2. At least min_classes have images (prevents bias from single-class data)
         """
         # First check class diversity (prevents bias)
         if self.classes_with_images < self.threshold_min_classes:
             return False
         
-        # Check if any class has enough images
-        for count in self.images_per_class.values():
-            if count >= self.threshold_per_class:
+        # Check if ALL classes with images have at least threshold_per_class images
+        # This ensures balanced training across all classes
+        if self.images_per_class:
+            all_classes_meet_threshold = all(
+                count >= self.threshold_per_class 
+                for count in self.images_per_class.values() 
+                if count > 0  # Only check classes that have images
+            )
+            if all_classes_meet_threshold and self.classes_with_images >= self.threshold_min_classes:
                 return True
-        # Check total
+        
+        # Check total threshold as fallback
         return self.total_feedback_images >= self.threshold_total
     
     @property
@@ -216,11 +317,19 @@ class RetrainingStatus:
         if self.classes_with_images < self.threshold_min_classes:
             return f"Need images from at least {self.threshold_min_classes} classes (have {self.classes_with_images}) to prevent model bias"
         
-        has_class_threshold = any(count >= self.threshold_per_class for count in self.images_per_class.values())
+        # Check if all classes meet per-class threshold
+        classes_below_threshold = [
+            (cls, count) for cls, count in self.images_per_class.items() 
+            if count > 0 and count < self.threshold_per_class
+        ]
+        all_classes_meet_threshold = len(classes_below_threshold) == 0 and self.classes_with_images >= self.threshold_min_classes
         has_total_threshold = self.total_feedback_images >= self.threshold_total
         
-        if not has_class_threshold and not has_total_threshold:
-            return f"Need {self.threshold_per_class} images in one class OR {self.threshold_total} total images"
+        if not all_classes_meet_threshold and not has_total_threshold:
+            if classes_below_threshold:
+                below_list = ", ".join([f"{cls}:{count}" for cls, count in classes_below_threshold[:3]])
+                return f"Need {self.threshold_per_class} images in ALL classes (below: {below_list}) OR {self.threshold_total} total images"
+            return f"Need {self.threshold_per_class} images in ALL classes OR {self.threshold_total} total images"
         
         return None
 
@@ -1073,18 +1182,26 @@ class ModelRetrainingManager:
             stem_weight = state_dict.get('stem.0.weight')
             base_channels = stem_weight.shape[0] if stem_weight is not None else 48
             
-            # Check if we need to expand classifier for new classes
-            original_num_classes = 11  # Original model has 11 classes
+            # Detect number of classes from checkpoint's classifier layer
+            # This is critical - the checkpoint may have 11 or 12 classes depending on whether
+            # it was trained with the junk class
+            checkpoint_num_classes = 12  # Default fallback (11 pests + junk)
+            classifier_weight = state_dict.get('classifier.6.weight')
+            if classifier_weight is not None:
+                checkpoint_num_classes = classifier_weight.shape[0]
+                logger.info(f"Detected {checkpoint_num_classes} classes from checkpoint")
             
+            # Create model with the same number of classes as the checkpoint
             model = EnhancedStudentModel(
-                num_classes=original_num_classes,
+                num_classes=checkpoint_num_classes,
                 base_channels=base_channels
             )
             model.load_state_dict(state_dict, strict=False)
             
-            # If adding junk class, expand the classifier
-            if self.config.include_junk_class and num_classes > original_num_classes:
+            # If we need more classes than checkpoint has, expand the classifier
+            if num_classes > checkpoint_num_classes:
                 model = self._expand_classifier(model, num_classes)
+                logger.info(f"Expanded model from {checkpoint_num_classes} to {num_classes} classes")
             
             logger.info(f"Loaded EnhancedStudentModel with {num_classes} classes")
             
@@ -1396,11 +1513,18 @@ class ModelRetrainingManager:
     
     def _validate_rotation(self, model, dataloader, device) -> float:
         """
-        Validate on rotated images (90°, 180°, 270°).
-        Returns AVERAGE accuracy across rotations (matching rotation training script).
+        Validate on rotated images using full 24-angle rotation testing.
+        Returns AVERAGE accuracy across all rotation angles (matching comprehensive training).
+        
+        Phase 2 Update: Now uses full 24-angle rotation validation for consistency
+        with ghost_trainer.py and comprehensive_trainer.py.
         """
         model.eval()
-        rotation_angles = [90, 180, 270]
+        # Full 24-angle rotation validation (Phase 2)
+        rotation_angles = [
+            0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165,
+            180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345
+        ]
         accuracies = []
         
         with torch.no_grad():
@@ -1657,8 +1781,19 @@ class ModelRetrainingManager:
                                 outputs = model(images)
                                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                                 
+                                # NaN check on model outputs
+                                if torch.isnan(logits).any():
+                                    logger.warning(f"NaN detected in model outputs at batch {batch_idx}, skipping...")
+                                    continue
+                                
                                 # Get soft labels from SINGLE teacher
                                 teacher_soft_labels = teacher.get_soft_labels(images)
+                                
+                                # NaN check on soft labels
+                                if teacher_soft_labels is not None and torch.isnan(teacher_soft_labels).any():
+                                    logger.warning(f"NaN detected in soft labels at batch {batch_idx}, skipping...")
+                                    continue
+                                
                                 base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
                                 ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
                                 
@@ -1669,6 +1804,11 @@ class ModelRetrainingManager:
                                     ewc_loss_total += ewc_penalty.item()
                                 else:
                                     loss = base_loss
+                                
+                                # NaN and sanity check on total loss
+                                if torch.isnan(loss) or loss.item() > 100:
+                                    logger.warning(f"Loss explosion/NaN at batch {batch_idx}: {loss.item() if not torch.isnan(loss) else 'NaN'}, skipping...")
+                                    continue
                             
                             scaler.scale(loss).backward()
                             scaler.unscale_(optimizer)
@@ -1679,7 +1819,18 @@ class ModelRetrainingManager:
                             outputs = model(images)
                             logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                             
+                            # NaN check on model outputs
+                            if torch.isnan(logits).any():
+                                logger.warning(f"NaN detected in model outputs at batch {batch_idx}, skipping...")
+                                continue
+                            
                             teacher_soft_labels = teacher.get_soft_labels(images)
+                            
+                            # NaN check on soft labels
+                            if teacher_soft_labels is not None and torch.isnan(teacher_soft_labels).any():
+                                logger.warning(f"NaN detected in soft labels at batch {batch_idx}, skipping...")
+                                continue
+                            
                             base_loss, loss_dict = kd_loss_fn(logits, labels, teacher_soft_labels)
                             ce_loss = torch.tensor(loss_dict['ce_loss'], device=device)
                             
@@ -1689,6 +1840,11 @@ class ModelRetrainingManager:
                                 ewc_loss_total += ewc_penalty.item()
                             else:
                                 loss = base_loss
+                            
+                            # NaN and sanity check on total loss
+                            if torch.isnan(loss) or loss.item() > 100:
+                                logger.warning(f"Loss explosion/NaN at batch {batch_idx}: {loss.item() if not torch.isnan(loss) else 'NaN'}, skipping...")
+                                continue
                             
                             loss.backward()
                             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=self.config.gradient_clip_norm)

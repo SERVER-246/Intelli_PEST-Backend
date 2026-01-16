@@ -1,0 +1,19 @@
+{
+    "include": [
+        ".",
+        "inference_server",
+        "black_ops_training",
+        "src"
+    ],
+    "extraPaths": [
+        ".",
+        "./black_ops_training",
+        "./black_ops_training/src",
+        "./inference_server",
+        "./inference_server/engine",
+        "./src"
+    ],
+    "pythonVersion": "3.10",
+    "typeCheckingMode": "basic",
+    "reportMissingImports": "warning"
+}

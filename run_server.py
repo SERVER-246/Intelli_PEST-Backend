@@ -15,9 +15,10 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 logging.basicConfig(format=LOG_FORMAT, datefmt=DATE_FORMAT, level=logging.INFO)
 
 # Available models
-# Use the PROPERLY EXPANDED 12-class model (preserves 96.25% accuracy + adds junk class)
+# Primary model - this is where ghost_trainer deploys updated weights
 MODELS = {
-    "pytorch": r"D:\KnowledgeDistillation\student_model_12class_proper.pt",
+    "pytorch": r"D:\KnowledgeDistillation\student_model_rotation_robust.pt",  # Ghost trainer target
+    "pytorch_12class_backup": r"D:\KnowledgeDistillation\student_model_12class_proper.pt",  # Backup 12-class
     "pytorch_11class": r"D:\KnowledgeDistillation\student_model_final.pth",  # Original 11-class backup
     "onnx": r"D:\KnowledgeDistillation\exported_models\student_model_rotation_robust.onnx",
 }
@@ -25,7 +26,6 @@ MODELS = {
 # Broken models (for reference - DO NOT USE)
 BROKEN_MODELS = {
     "v1.0.1_broken": r"D:\KnowledgeDistillation\student_model_v1.0.1.pt",  # aux_classifiers mismatch
-    "rotation_robust_broken": r"D:\KnowledgeDistillation\student_model_rotation_robust.pt",
 }
 
 # Default model format
