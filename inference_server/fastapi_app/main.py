@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from .routers import router, admin_router
@@ -63,9 +64,10 @@ def create_app(
             
             # Generate default key if none exist
             if api_key_manager.get_stats().get("total_keys", 0) == 0:
+                from ..security.api_keys import APIKeyTier
                 default_key = api_key_manager.generate_key(
                     name="default",
-                    tier="admin",
+                    tier=APIKeyTier.ADMIN,
                     description="Default admin key",
                 )
                 logger.info(f"Generated default API key: {default_key['key']}")
@@ -98,14 +100,9 @@ def create_app(
             max_aspect_ratio=10.0,
         )
         
-        # Configure content filter with relaxed settings but human detection
-        # - Lower vegetation threshold (pest damage images may not be very green)
-        # - Keep face/skin detection to reject obviously wrong images
-        content_filter = ContentFilter(
-            relevance_threshold=0.25,         # Lower threshold for relevance
-            min_vegetation_ratio=0.05,        # Very permissive (pest damage may be brown)
-            min_natural_score=0.20,           # Allow more types of natural images
-        )
+        # Configure content filter - simplified version that only blocks obvious non-plant images
+        # (faces, solid colors). Users can report irrelevant images via "junk" feedback.
+        content_filter = ContentFilter(enabled=True)
         
         validation_pipeline = ValidationPipeline(
             file_validator=file_validator,
@@ -115,9 +112,6 @@ def create_app(
         )
         set_validation_pipeline(validation_pipeline)
         logger.info("Image validation pipeline loaded (with human detection filter enabled)")
-        
-    except Exception as e:
-        logger.warning(f"Validation pipeline not available: {e}")
         
     except Exception as e:
         logger.warning(f"Validation pipeline not available: {e}")
@@ -182,6 +176,17 @@ def create_app(
     app.state.start_time = time.time()
     app.state.config = config
     
+    # Initialize analytics for correction tracking
+    try:
+        from src.analytics.integration import init_analytics
+        model_version = config.get("version", "1.0.0")
+        init_analytics(model_version=model_version)
+        logger.info(f"Analytics initialized with model version: {model_version}")
+    except ImportError:
+        logger.debug("Analytics module not available, skipping initialization")
+    except Exception as e:
+        logger.warning(f"Failed to initialize analytics: {e}")
+    
     # Add CORS middleware
     cors_origins = config.get("cors_origins", ["*"])
     app.add_middleware(
@@ -191,6 +196,12 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    # GZIP compression disabled - causes MalformedJsonException on Android/OkHttp
+    # when used with Dev Tunnels. OkHttp adds Accept-Encoding: gzip automatically
+    # but something in the response chain corrupts the Content-Encoding header.
+    # TODO: Re-enable once we can test with proper production server setup.
+    # app.add_middleware(GZipMiddleware, minimum_size=500)
     
     # Add timing middleware
     @app.middleware("http")

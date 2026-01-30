@@ -68,7 +68,7 @@ class InferenceResult:
     predicted_class: int = -1
     class_name: str = ""
     confidence: float = 0.0
-    probabilities: Dict[str, float] = None
+    probabilities: Optional[Dict[str, float]] = None
     logits: Any = None
     features: Any = None
     inference_time_ms: float = 0.0
@@ -307,7 +307,7 @@ class InferenceEngine:
             
             # Attention map
             if not result.attention_map.is_empty():
-                phase3_dict["attention_map"] = result.attention_map.attention_map_base64 if hasattr(result.attention_map, 'attention_map_base64') else None
+                phase3_dict["attention_map"] = getattr(result.attention_map, 'attention_map_base64', None)
                 phase3_dict["attention_method"] = result.attention_map.generation_method
             
             return phase3_dict

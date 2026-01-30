@@ -73,11 +73,11 @@ def health_check():
 @api.route("/models", methods=["GET"])
 def list_models():
     """List available models (public info only)."""
-    from ..engine.model_registry import get_registry
+    from ..engine.model_registry import get_model_registry
     
     try:
-        registry = get_registry()
-        exposed_models = registry.get_exposed_models()
+        registry = get_model_registry()
+        exposed_models = [m.to_dict() for m in registry.list_exposed()]
         
         return jsonify({
             "status": "success",

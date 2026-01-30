@@ -38,6 +38,7 @@ from .schemas import (
     BatchSummary,
     ClassInfo,
     ModelInfo,
+    ExposedModelInfo,
     FeedbackRequest,
     FeedbackResponse,
     FeedbackStatsResponse,
@@ -47,11 +48,30 @@ from .schemas import (
     Phase3AttentionInfo,
     Phase3RegionInfo,
     Phase3MultiLabelPrediction,
+    # Connection tracking schemas
+    ConnectionSample,
+    ConnectionReportRequest,
+    ConnectionReportResponse,
+    ConnectionStatsResponse,
 )
 from ..feedback import FeedbackManager
 from ..feedback.feedback_manager import get_feedback_manager
 from ..feedback.user_tracker import get_user_tracker
 from ..feedback.data_collector import get_data_collector
+from .connection_tracker import get_connection_tracker
+
+# Analytics integration for correction tracking
+try:
+    from src.analytics.integration import (
+        init_analytics,
+        log_prediction as analytics_log_prediction,
+        log_correction as analytics_log_correction,
+    )
+    ANALYTICS_AVAILABLE = True
+except ImportError:
+    ANALYTICS_AVAILABLE = False
+    analytics_log_prediction = None
+    analytics_log_correction = None
 
 logger = logging.getLogger(__name__)
 
@@ -98,14 +118,25 @@ async def list_models():
     Returns publicly exposed models only.
     """
     try:
-        from ..engine.model_registry import get_registry
+        from ..engine.model_registry import get_model_registry
         
-        registry = get_registry()
-        exposed_models = registry.get_exposed_models()
+        registry = get_model_registry()
+        exposed_models = registry.list_exposed()
+        
+        # Convert RegisteredModel to ExposedModelInfo
+        models_info = [
+            ExposedModelInfo(
+                name=m.name,
+                description=m.description or None,
+                accuracy=m.accuracy,
+                formats=m.available_formats(),
+            )
+            for m in exposed_models
+        ]
         
         return ModelsResponse(
             status="success",
-            models=exposed_models,
+            models=models_info,
         )
     except Exception as e:
         logger.exception("Error listing models")
@@ -154,12 +185,14 @@ async def list_classes(
 async def predict(
     image: UploadFile = File(..., description="Image file to classify"),
     include_probabilities: bool = Query(False, description="Include all class probabilities"),
+    lite: bool = Query(False, description="Lite mode for slow connections (2G/3G) - minimal response"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id", description="User ID"),
     x_user_email: Optional[str] = Header(None, alias="X-User-Email", description="User email"),
     x_device_id: Optional[str] = Header(None, alias="X-Device-Id", description="Device ID"),
     x_latitude: Optional[str] = Header(None, alias="X-Latitude", description="GPS latitude"),
     x_longitude: Optional[str] = Header(None, alias="X-Longitude", description="GPS longitude"),
     x_app_version: Optional[str] = Header(None, alias="X-App-Version", description="App version"),
+    x_connection_info: Optional[str] = Header(None, alias="X-Connection-Info", description="Connection quality info (type:value;quality:level)"),
     api_key: dict = Depends(check_rate_limit),
     engine=Depends(get_inference_engine),
     pipeline=Depends(get_validation_pipeline),
@@ -170,8 +203,13 @@ async def predict(
     
     Upload an image to get pest classification.
     Include user info via headers (X-User-Id, X-User-Email, X-Device-Id, X-Latitude, X-Longitude, X-App-Version).
+    Include connection info via X-Connection-Info header for slow connection tracking.
     Returns a feedback_id that can be used to submit corrections.
     """
+    # Log connection info if provided
+    if x_connection_info:
+        logger.debug(f"Connection info from client: {x_connection_info}")
+    
     # Parse header values
     user_id = x_user_id
     email = x_user_email
@@ -293,6 +331,15 @@ async def predict(
                 user_id=user_id,
             )
         
+        # Log prediction for analytics tracking
+        if ANALYTICS_AVAILABLE and feedback_id and analytics_log_prediction and user_id:
+            analytics_log_prediction(
+                prediction_id=feedback_id,
+                predicted_class=class_name,
+                confidence=confidence,
+                user_id=user_id,
+            )
+        
         # Build response
         prediction = PredictionResult(
             **{
@@ -334,7 +381,7 @@ async def predict(
                         # Add regions from p3_result.regions (not relevance_scores)
                         if not p3_result.regions.is_empty():
                             regions_list = []
-                            for proposal in p3_result.regions.proposals:
+                            for proposal in p3_result.regions.proposals:  # type: ignore[union-attr]
                                 regions_list.append({
                                     "region_id": proposal.region_id,
                                     "bbox": list(proposal.bbox) if proposal.bbox else None,
@@ -356,7 +403,7 @@ async def predict(
                         if not p3_result.multi_label.is_empty():
                             predictions = []
                             class_names = getattr(engine, 'class_names', None) or []
-                            for class_id in p3_result.multi_label.predicted_labels:
+                            for class_id in p3_result.multi_label.predicted_labels:  # type: ignore[union-attr]
                                 label_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
                                 conf = p3_result.multi_label.label_confidences.get(class_id, 0.0)
                                 predictions.append({
@@ -435,6 +482,18 @@ async def predict(
                     executed=False,
                     error=str(p3_err),
                 )
+        
+        # In lite mode, return minimal response for slow connections (2G/3G)
+        if lite:
+            return PredictionResponse(
+                status="success",
+                request_id=ctx.request_id,
+                timestamp=None,  # Skip timestamp to save bytes
+                prediction=prediction,
+                inference=None,  # Skip inference info
+                feedback_id=feedback_id,
+                phase3=None,  # Skip Phase 3 data
+            )
         
         return PredictionResponse(
             status="success",
@@ -554,7 +613,7 @@ async def predict_base64(
                     # Add regions from p3_result.regions (not relevance_scores)
                     if not p3_result.regions.is_empty():
                         regions_list = []
-                        for proposal in p3_result.regions.proposals:
+                        for proposal in p3_result.regions.proposals:  # type: ignore[union-attr]
                             regions_list.append({
                                 "region_id": proposal.region_id,
                                 "bbox": list(proposal.bbox) if proposal.bbox else None,
@@ -577,7 +636,7 @@ async def predict_base64(
                     if not p3_result.multi_label.is_empty():
                         predictions = []
                         class_names = getattr(engine, 'class_names', None) or []
-                        for class_id in p3_result.multi_label.predicted_labels:
+                        for class_id in p3_result.multi_label.predicted_labels:  # type: ignore[union-attr]
                             label_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
                             conf = p3_result.multi_label.label_confidences.get(class_id, 0.0)
                             predictions.append({
@@ -846,6 +905,15 @@ async def submit_feedback(
             },
         )
     
+    # Log correction for analytics tracking
+    if ANALYTICS_AVAILABLE and analytics_log_correction:
+        analytics_log_correction(
+            prediction_id=result["feedback_id"],
+            predicted_class=result["recorded"]["original_prediction"],
+            actual_class=result["recorded"]["corrected_to"] or result["recorded"]["original_prediction"],
+            is_correct=result["recorded"]["is_correct"],
+        )
+    
     return FeedbackResponse(
         status="success",
         request_id=None,
@@ -940,6 +1008,80 @@ async def get_feedback_stats(
         corrections_by_class=stats["corrections_by_class"],
         junk_reports=stats.get("junk_reports", 0),
         special_categories=stats.get("special_categories", {}),
+    )
+
+
+# ============================================================
+# Connection Quality Tracking Endpoints
+# ============================================================
+
+@router.post("/connection/report", response_model=ConnectionReportResponse)
+async def report_connection_samples(
+    request: ConnectionReportRequest,
+    api_key: dict = Depends(check_rate_limit),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """
+    Report connection quality samples from the mobile app.
+    
+    Used to track network conditions in different locations for analytics.
+    Helps identify areas with poor connectivity for optimization.
+    """
+    tracker = get_connection_tracker()
+    
+    samples_data = [
+        {
+            "timestamp": s.timestamp,
+            "network_type": s.network_type,
+            "quality_level": s.quality_level,
+            "download_speed_kbps": s.download_speed_kbps,
+            "latitude": s.latitude,
+            "longitude": s.longitude,
+        }
+        for s in request.samples
+    ]
+    
+    recorded = tracker.record_samples(
+        device_id=request.device_id,
+        user_id=request.user_id,
+        app_version=request.app_version,
+        samples=samples_data,
+    )
+    
+    logger.info(f"Recorded {recorded} connection samples from device {request.device_id}")
+    
+    return ConnectionReportResponse(
+        status="success",
+        request_id=ctx.request_id,
+        timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        message=f"Recorded {recorded} connection samples",
+        samples_received=recorded,
+    )
+
+
+@admin_router.get("/connection/stats", response_model=ConnectionStatsResponse)
+async def get_connection_stats(
+    days: int = Query(30, ge=1, le=365, description="Number of days to include"),
+    api_key: dict = Depends(require_admin),
+):
+    """
+    Get connection quality statistics.
+    
+    Admin only endpoint. Returns statistics about network connectivity
+    including slow connection locations for service optimization.
+    """
+    tracker = get_connection_tracker()
+    stats = tracker.get_statistics(days=days)
+    
+    return ConnectionStatsResponse(
+        status="success",
+        request_id=None,
+        timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        total_samples=stats["total_samples"],
+        samples_by_network_type=stats["samples_by_network_type"],
+        samples_by_quality=stats["samples_by_quality"],
+        slow_connection_locations=stats["slow_connection_locations"],
+        average_speeds_by_type=stats["average_speeds_by_type"],
     )
 
 

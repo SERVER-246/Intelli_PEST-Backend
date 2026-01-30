@@ -117,7 +117,7 @@ def get_latest_apk() -> Optional[dict]:
                 latest_timestamp = timestamp
                 latest_apk = apk_path
     
-    if latest_apk is None:
+    if latest_apk is None or latest_timestamp is None:
         logger.warning("No valid APK files with proper naming found")
         return None
     
