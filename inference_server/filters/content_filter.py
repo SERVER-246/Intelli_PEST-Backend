@@ -170,7 +170,7 @@ class ContentFilter:
     
     def _detect_faces(self, img: np.ndarray) -> tuple:
         """
-        Detect faces using Haar cascade.
+        Detect faces using Haar cascade with stricter parameters to reduce false positives.
         
         Returns:
             Tuple of (has_face: bool, num_faces: int)
@@ -181,17 +181,35 @@ class ContentFilter:
                 self._face_cascade = cv2.CascadeClassifier(cascade_path)
             
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            h, w = gray.shape[:2]
+            
+            # Use stricter parameters to reduce false positives on plant images
+            # minNeighbors=8 (was 5) - requires more detections to confirm
+            # minSize relative to image - at least 15% of min dimension
+            min_face_size = max(60, int(min(h, w) * 0.15))
             
             faces = self._face_cascade.detectMultiScale(
                 gray,
                 scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30),
+                minNeighbors=8,  # Increased from 5 to reduce false positives
+                minSize=(min_face_size, min_face_size),
                 flags=cv2.CASCADE_SCALE_IMAGE
             )
             
-            num_faces = len(faces)
-            return num_faces > 0, num_faces
+            if len(faces) == 0:
+                return False, 0
+            
+            # Additional validation: face should be reasonably sized
+            # and not just a small detected region
+            valid_faces = 0
+            for (x, y, fw, fh) in faces:
+                # Face should be at least 10% of image area to be considered real
+                face_area = fw * fh
+                image_area = w * h
+                if face_area / image_area > 0.05:  # At least 5% of image
+                    valid_faces += 1
+            
+            return valid_faces > 0, valid_faces
             
         except Exception as e:
             logger.warning(f"Face detection failed: {e}")

@@ -247,12 +247,15 @@ async def predict(
         validation_result = pipeline.validate_pre_inference(image_bytes, filename)
         
         if not validation_result.valid:
+            error_code = validation_result.error_code or "IMAGE_VALIDATION_FAILED"
+            failed_layer = validation_result.failed_layer.value if validation_result.failed_layer else None
+            logger.warning(f"Image validation failed: {error_code} at layer {failed_layer} - {validation_result.error_message}")
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "code": validation_result.error_code or "IMAGE_VALIDATION_FAILED",
+                    "code": error_code,
                     "message": validation_result.error_message or "Validation failed",
-                    "failed_layer": validation_result.failed_layer.value if validation_result.failed_layer else None,
+                    "failed_layer": failed_layer,
                 },
             )
     
