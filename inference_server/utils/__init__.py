@@ -1,7 +1,7 @@
 """Utilities module."""
+from .logger import get_logger, setup_logging
+from .postprocessing import format_batch_predictions, format_prediction
 from .preprocessing import ImagePreprocessor, preprocess_image, resize_image
-from .postprocessing import format_prediction, format_batch_predictions
-from .logger import setup_logging, get_logger
 
 __all__ = [
     "ImagePreprocessor",

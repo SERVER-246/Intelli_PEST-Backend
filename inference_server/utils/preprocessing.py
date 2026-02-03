@@ -4,10 +4,10 @@ Image Preprocessing
 Image preprocessing utilities for inference.
 """
 
-import logging
-from typing import Tuple, Optional, Union
-from pathlib import Path
 import io
+import logging
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -38,28 +38,28 @@ except ImportError:
 class ImagePreprocessor:
     """
     Image preprocessing for model inference.
-    
+
     Handles:
     - Image loading from bytes/file
     - Resizing to target dimensions
     - Color space conversion
     - Normalization
     """
-    
+
     # ImageNet normalization parameters
     IMAGENET_MEAN = [0.485, 0.456, 0.406]
     IMAGENET_STD = [0.229, 0.224, 0.225]
-    
+
     def __init__(
         self,
-        target_size: Tuple[int, int] = (224, 224),
-        mean: Optional[Tuple[float, ...]] = None,
-        std: Optional[Tuple[float, ...]] = None,
+        target_size: tuple[int, int] = (224, 224),
+        mean: tuple[float, ...] | None = None,
+        std: tuple[float, ...] | None = None,
         interpolation: str = "bilinear",
     ):
         """
         Initialize preprocessor.
-        
+
         Args:
             target_size: Target image size (H, W)
             mean: Normalization mean (RGB)
@@ -70,7 +70,7 @@ class ImagePreprocessor:
         self.mean = mean or tuple(self.IMAGENET_MEAN)
         self.std = std or tuple(self.IMAGENET_STD)
         self.interpolation = interpolation
-        
+
         # Select backend
         if CV2_AVAILABLE and NUMPY_AVAILABLE:
             self._backend = "cv2"
@@ -78,16 +78,16 @@ class ImagePreprocessor:
             self._backend = "pil"
         else:
             raise ImportError("Either OpenCV or PIL is required for image preprocessing")
-        
+
         logger.debug(f"Using {self._backend} backend for preprocessing")
-    
-    def load_image(self, source: Union[bytes, str, Path]) -> np.ndarray:
+
+    def load_image(self, source: bytes | str | Path) -> np.ndarray:
         """
         Load image from bytes or file path.
-        
+
         Args:
             source: Image bytes or file path
-            
+
         Returns:
             Image as numpy array (H, W, C) in RGB
         """
@@ -95,7 +95,7 @@ class ImagePreprocessor:
             return self._load_from_bytes(source)
         else:
             return self._load_from_file(Path(source))
-    
+
     def _load_from_bytes(self, data: bytes) -> np.ndarray:
         """Load image from bytes."""
         if self._backend == "cv2":
@@ -110,14 +110,14 @@ class ImagePreprocessor:
             if img.mode != "RGB":
                 img = img.convert("RGB")
             img = np.array(img)
-        
+
         return img
-    
+
     def _load_from_file(self, path: Path) -> np.ndarray:
         """Load image from file."""
         if not path.exists():
             raise FileNotFoundError(f"Image not found: {path}")
-        
+
         if self._backend == "cv2":
             img = cv2.imread(str(path))
             if img is None:
@@ -128,25 +128,25 @@ class ImagePreprocessor:
             if img.mode != "RGB":
                 img = img.convert("RGB")
             img = np.array(img)
-        
+
         return img
-    
+
     def resize(self, image: np.ndarray) -> np.ndarray:
         """
         Resize image to target size.
-        
+
         Args:
             image: Input image (H, W, C)
-            
+
         Returns:
             Resized image
         """
         h, w = image.shape[:2]
         target_h, target_w = self.target_size
-        
+
         if h == target_h and w == target_w:
             return image
-        
+
         if self._backend == "cv2":
             interp_map = {
                 "nearest": cv2.INTER_NEAREST,
@@ -167,16 +167,16 @@ class ImagePreprocessor:
             interp = interp_map.get(self.interpolation, Image.BILINEAR)
             pil_img = pil_img.resize((target_w, target_h), interp)
             resized = np.array(pil_img)
-        
+
         return resized
-    
+
     def normalize(self, image: np.ndarray) -> np.ndarray:
         """
         Normalize image.
-        
+
         Args:
             image: Input image (H, W, C), 0-255 uint8 or 0-1 float
-            
+
         Returns:
             Normalized image as float32
         """
@@ -185,27 +185,27 @@ class ImagePreprocessor:
             img = image.astype(np.float32) / 255.0
         else:
             img = image.astype(np.float32)
-        
+
         # Apply normalization
         mean = np.array(self.mean, dtype=np.float32).reshape(1, 1, 3)
         std = np.array(self.std, dtype=np.float32).reshape(1, 1, 3)
-        
+
         normalized = (img - mean) / std
-        
+
         return normalized
-    
+
     def preprocess(
         self,
-        source: Union[bytes, str, Path, np.ndarray],
+        source: bytes | str | Path | np.ndarray,
         normalize: bool = True,
     ) -> np.ndarray:
         """
         Full preprocessing pipeline.
-        
+
         Args:
             source: Image source (bytes, path, or numpy array)
             normalize: Whether to apply normalization
-            
+
         Returns:
             Preprocessed image (H, W, C)
         """
@@ -214,7 +214,7 @@ class ImagePreprocessor:
             image = source.copy()
         else:
             image = self.load_image(source)
-        
+
         # Ensure RGB
         if len(image.shape) == 2:
             image = np.stack([image, image, image], axis=-1)
@@ -222,16 +222,16 @@ class ImagePreprocessor:
             image = np.repeat(image, 3, axis=-1)
         elif image.shape[-1] == 4:
             image = image[:, :, :3]  # Remove alpha
-        
+
         # Resize
         image = self.resize(image)
-        
+
         # Normalize
         if normalize:
             image = self.normalize(image)
-        
+
         return image
-    
+
     def preprocess_batch(
         self,
         sources: list,
@@ -239,11 +239,11 @@ class ImagePreprocessor:
     ) -> np.ndarray:
         """
         Preprocess multiple images.
-        
+
         Args:
             sources: List of image sources
             normalize: Whether to apply normalization
-            
+
         Returns:
             Batch of preprocessed images (N, H, W, C)
         """
@@ -252,7 +252,7 @@ class ImagePreprocessor:
 
 
 # Global preprocessor instance
-_preprocessor: Optional[ImagePreprocessor] = None
+_preprocessor: ImagePreprocessor | None = None
 
 
 def get_preprocessor(**kwargs) -> ImagePreprocessor:
@@ -264,18 +264,18 @@ def get_preprocessor(**kwargs) -> ImagePreprocessor:
 
 
 def preprocess_image(
-    source: Union[bytes, str, Path, np.ndarray],
-    target_size: Tuple[int, int] = (224, 224),
+    source: bytes | str | Path | np.ndarray,
+    target_size: tuple[int, int] = (224, 224),
     normalize: bool = True,
 ) -> np.ndarray:
     """
     Preprocess an image for inference.
-    
+
     Args:
         source: Image source
         target_size: Target size (H, W)
         normalize: Whether to normalize
-        
+
     Returns:
         Preprocessed image
     """
@@ -285,15 +285,15 @@ def preprocess_image(
 
 def resize_image(
     image: np.ndarray,
-    target_size: Tuple[int, int] = (224, 224),
+    target_size: tuple[int, int] = (224, 224),
 ) -> np.ndarray:
     """
     Resize an image.
-    
+
     Args:
         image: Input image
         target_size: Target size (H, W)
-        
+
     Returns:
         Resized image
     """

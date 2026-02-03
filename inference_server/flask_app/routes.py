@@ -9,11 +9,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from flask import Blueprint, request, jsonify, g, current_app
+from flask import Blueprint, current_app, g, jsonify, request
 
 from .middleware import (
-    require_api_key,
     rate_limit,
+    require_api_key,
     validate_content_type,
     validate_request_size,
 )
@@ -44,10 +44,10 @@ def get_api_key_manager():
 def health_check():
     """Health check endpoint."""
     engine = get_engine()
-    
+
     model_loaded = engine is not None
     model_info = None
-    
+
     if engine:
         try:
             model_info = {
@@ -57,7 +57,7 @@ def health_check():
             }
         except Exception:
             pass
-    
+
     return jsonify({
         "status": "healthy" if model_loaded else "degraded",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -74,11 +74,11 @@ def health_check():
 def list_models():
     """List available models (public info only)."""
     from ..engine.model_registry import get_model_registry
-    
+
     try:
         registry = get_model_registry()
         exposed_models = [m.to_dict() for m in registry.list_exposed()]
-        
+
         return jsonify({
             "status": "success",
             "models": exposed_models,
@@ -102,17 +102,17 @@ def list_models():
 def predict():
     """
     Single image prediction endpoint.
-    
+
     Accepts:
     - multipart/form-data with 'image' file
     - application/json with base64 'image_data'
     """
     request_id = getattr(g, "request_id", f"req_{int(time.time() * 1000)}")
     start_time = time.time()
-    
+
     engine = get_engine()
     pipeline = get_validation_pipeline()
-    
+
     if engine is None:
         return jsonify({
             "status": "error",
@@ -122,11 +122,11 @@ def predict():
                 "message": "Inference model is not loaded",
             }
         }), 503
-    
+
     # Get image data
     image_bytes = None
     filename = "upload"
-    
+
     if request.content_type and "multipart/form-data" in request.content_type:
         # File upload
         if "image" not in request.files:
@@ -138,7 +138,7 @@ def predict():
                     "message": "No image file provided. Use 'image' field in form data.",
                 }
             }), 400
-        
+
         file = request.files["image"]
         if file.filename == "":
             return jsonify({
@@ -149,14 +149,14 @@ def predict():
                     "message": "No file selected",
                 }
             }), 400
-        
+
         filename = file.filename
         image_bytes = file.read()
-    
+
     elif request.content_type and "application/json" in request.content_type:
         # JSON with base64
         import base64
-        
+
         data = request.get_json()
         if not data or "image_data" not in data:
             return jsonify({
@@ -167,7 +167,7 @@ def predict():
                     "message": "No image_data provided in JSON body",
                 }
             }), 400
-        
+
         try:
             image_bytes = base64.b64decode(data["image_data"])
         except Exception:
@@ -179,7 +179,7 @@ def predict():
                     "message": "Invalid base64 image data",
                 }
             }), 400
-    
+
     else:
         return jsonify({
             "status": "error",
@@ -189,11 +189,11 @@ def predict():
                 "message": "Use multipart/form-data or application/json",
             }
         }), 415
-    
+
     # Validate image if pipeline is available
     if pipeline:
         validation_result = pipeline.validate(image_bytes, filename)
-        
+
         if not validation_result.valid:
             return jsonify({
                 "status": "rejected",
@@ -208,13 +208,13 @@ def predict():
                 },
                 "suggestion": "Please upload a clear image of sugarcane plant or suspected pest damage",
             }), 400
-    
+
     # Run inference
     try:
         result = engine.predict(image_bytes)
-        
+
         inference_time = (time.time() - start_time) * 1000
-        
+
         response = {
             "status": "success",
             "request_id": request_id,
@@ -230,7 +230,7 @@ def predict():
                 "time_ms": round(inference_time, 2),
             },
         }
-        
+
         # Include all probabilities if requested
         if request.args.get("include_probabilities", "false").lower() == "true":
             probs = result.get("probabilities", {})
@@ -238,9 +238,9 @@ def predict():
                 response["prediction"]["all_probabilities"] = {
                     k: round(v, 4) for k, v in probs.items()
                 }
-        
+
         return jsonify(response)
-    
+
     except Exception as e:
         logger.exception(f"Inference error: {e}")
         return jsonify({
@@ -261,15 +261,15 @@ def predict():
 def predict_batch():
     """
     Batch image prediction endpoint.
-    
+
     Accepts multipart/form-data with multiple 'images' files.
     """
     request_id = getattr(g, "request_id", f"req_{int(time.time() * 1000)}")
     start_time = time.time()
-    
+
     engine = get_engine()
     pipeline = get_validation_pipeline()
-    
+
     if engine is None:
         return jsonify({
             "status": "error",
@@ -279,10 +279,10 @@ def predict_batch():
                 "message": "Inference model is not loaded",
             }
         }), 503
-    
+
     # Get images
     files = request.files.getlist("images")
-    
+
     if not files:
         return jsonify({
             "status": "error",
@@ -292,7 +292,7 @@ def predict_batch():
                 "message": "No images provided. Use 'images' field in form data.",
             }
         }), 400
-    
+
     # Limit batch size
     max_batch_size = current_app.config.get("max_batch_size", 10)
     if len(files) > max_batch_size:
@@ -304,15 +304,15 @@ def predict_batch():
                 "message": f"Maximum batch size is {max_batch_size} images",
             }
         }), 400
-    
+
     results = []
     successful = 0
     failed = 0
-    
+
     for i, file in enumerate(files):
         image_bytes = file.read()
         filename = file.filename or f"image_{i}"
-        
+
         # Validate
         if pipeline:
             validation_result = pipeline.validate(image_bytes, filename)
@@ -325,7 +325,7 @@ def predict_batch():
                 })
                 failed += 1
                 continue
-        
+
         # Predict
         try:
             result = engine.predict(image_bytes)
@@ -348,9 +348,9 @@ def predict_batch():
                 "error": str(e),
             })
             failed += 1
-    
+
     total_time = (time.time() - start_time) * 1000
-    
+
     return jsonify({
         "status": "success" if failed == 0 else "partial" if successful > 0 else "error",
         "request_id": request_id,
@@ -371,7 +371,7 @@ def predict_batch():
 def list_classes():
     """List pest classes."""
     engine = get_engine()
-    
+
     if engine is None:
         # Return default classes
         classes = [
@@ -389,7 +389,7 @@ def list_classes():
         ]
     else:
         classes = engine.class_names
-    
+
     return jsonify({
         "status": "success",
         "num_classes": len(classes),
@@ -406,7 +406,7 @@ def list_classes():
 def get_stats():
     """Get API statistics (admin only)."""
     tier = getattr(g, "api_tier", "free")
-    
+
     if tier != "admin":
         return jsonify({
             "status": "error",
@@ -415,17 +415,17 @@ def get_stats():
                 "message": "Admin access required",
             }
         }), 403
-    
+
     # Return statistics
     api_key_manager = get_api_key_manager()
-    
+
     stats = {
         "uptime_seconds": time.time() - current_app.config.get("start_time", time.time()),
     }
-    
+
     if api_key_manager:
         stats["api_keys"] = api_key_manager.get_stats()
-    
+
     return jsonify({
         "status": "success",
         "stats": stats,

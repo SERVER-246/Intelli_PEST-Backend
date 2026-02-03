@@ -8,10 +8,10 @@ Validates image integrity and properties:
 - Color mode validation
 """
 
-import logging
-from typing import Tuple, Optional
-from dataclasses import dataclass
 import io
+import logging
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +37,12 @@ except ImportError:
 class ImageValidationResult:
     """Result of image validation."""
     valid: bool
-    error_code: Optional[str] = None
-    error_message: Optional[str] = None
+    error_code: str | None = None
+    error_message: str | None = None
     width: int = 0
     height: int = 0
     channels: int = 0
-    mode: Optional[str] = None
+    mode: str | None = None
     aspect_ratio: float = 0.0
     quality_score: float = 1.0
 
@@ -50,10 +50,10 @@ class ImageValidationResult:
 class ImageValidator:
     """
     Layer 2: Image integrity validation.
-    
+
     Validates that the file is a valid image with acceptable properties.
     """
-    
+
     def __init__(
         self,
         min_dimension: int = 64,
@@ -65,7 +65,7 @@ class ImageValidator:
     ):
         """
         Initialize image validator.
-        
+
         Args:
             min_dimension: Minimum width/height in pixels
             max_dimension: Maximum width/height in pixels
@@ -80,14 +80,14 @@ class ImageValidator:
         self.max_aspect_ratio = max_aspect_ratio
         self.require_rgb = require_rgb
         self.check_corruption = check_corruption
-    
+
     def validate(self, image_data: bytes) -> ImageValidationResult:
         """
         Validate image data.
-        
+
         Args:
             image_data: Raw image bytes
-            
+
         Returns:
             ImageValidationResult with validation status
         """
@@ -103,13 +103,13 @@ class ImageValidator:
                 error_code="NO_IMAGE_LIBRARY",
                 error_message="Image processing library not available",
             )
-    
+
     def _validate_with_pil(self, image_data: bytes) -> ImageValidationResult:
         """Validate using PIL/Pillow."""
         try:
             # Try to open image
             img = Image.open(io.BytesIO(image_data))
-            
+
             # Verify image integrity (fully decode)
             if self.check_corruption:
                 try:
@@ -122,17 +122,17 @@ class ImageValidator:
                         error_code="CORRUPT_IMAGE",
                         error_message=f"Image appears to be corrupted: {str(e)}",
                     )
-            
+
             # Get dimensions
             width, height = img.size
             mode = img.mode
-            
+
             # Determine channel count
             channels = len(img.getbands())
-            
+
             # Calculate aspect ratio
             aspect_ratio = width / height if height > 0 else 0
-            
+
             # Check dimensions
             if width < self.min_dimension or height < self.min_dimension:
                 return ImageValidationResult(
@@ -145,7 +145,7 @@ class ImageValidator:
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                 )
-            
+
             if width > self.max_dimension or height > self.max_dimension:
                 return ImageValidationResult(
                     valid=False,
@@ -157,7 +157,7 @@ class ImageValidator:
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                 )
-            
+
             # Check aspect ratio
             if aspect_ratio < self.min_aspect_ratio or aspect_ratio > self.max_aspect_ratio:
                 return ImageValidationResult(
@@ -170,7 +170,7 @@ class ImageValidator:
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                 )
-            
+
             # Check color mode
             if self.require_rgb and mode not in ["RGB", "RGBA", "L"]:
                 return ImageValidationResult(
@@ -183,10 +183,10 @@ class ImageValidator:
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                 )
-            
+
             # Calculate quality score based on resolution
             quality_score = min(1.0, (width * height) / (224 * 224))
-            
+
             # All checks passed
             return ImageValidationResult(
                 valid=True,
@@ -197,7 +197,7 @@ class ImageValidator:
                 aspect_ratio=aspect_ratio,
                 quality_score=quality_score,
             )
-            
+
         except Exception as e:
             logger.error(f"Image validation failed: {e}")
             return ImageValidationResult(
@@ -205,21 +205,21 @@ class ImageValidator:
                 error_code="DECODE_ERROR",
                 error_message=f"Failed to decode image: {str(e)}",
             )
-    
+
     def _validate_with_cv2(self, image_data: bytes) -> ImageValidationResult:
         """Validate using OpenCV."""
         try:
             # Decode image
             nparr = np.frombuffer(image_data, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
-            
+
             if img is None:
                 return ImageValidationResult(
                     valid=False,
                     error_code="DECODE_ERROR",
                     error_message="Failed to decode image with OpenCV",
                 )
-            
+
             # Get dimensions
             if len(img.shape) == 2:
                 height, width = img.shape
@@ -228,9 +228,9 @@ class ImageValidator:
             else:
                 height, width, channels = img.shape
                 mode = "RGBA" if channels == 4 else "RGB"
-            
+
             aspect_ratio = width / height if height > 0 else 0
-            
+
             # Check dimensions
             if width < self.min_dimension or height < self.min_dimension:
                 return ImageValidationResult(
@@ -243,7 +243,7 @@ class ImageValidator:
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                 )
-            
+
             if width > self.max_dimension or height > self.max_dimension:
                 return ImageValidationResult(
                     valid=False,
@@ -255,7 +255,7 @@ class ImageValidator:
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                 )
-            
+
             # Check aspect ratio
             if aspect_ratio < self.min_aspect_ratio or aspect_ratio > self.max_aspect_ratio:
                 return ImageValidationResult(
@@ -268,9 +268,9 @@ class ImageValidator:
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                 )
-            
+
             quality_score = min(1.0, (width * height) / (224 * 224))
-            
+
             return ImageValidationResult(
                 valid=True,
                 width=width,
@@ -280,7 +280,7 @@ class ImageValidator:
                 aspect_ratio=aspect_ratio,
                 quality_score=quality_score,
             )
-            
+
         except Exception as e:
             logger.error(f"OpenCV validation failed: {e}")
             return ImageValidationResult(
@@ -291,7 +291,7 @@ class ImageValidator:
 
 
 # Global validator instance
-_validator: Optional[ImageValidator] = None
+_validator: ImageValidator | None = None
 
 
 def get_image_validator(**kwargs) -> ImageValidator:

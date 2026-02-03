@@ -1,7 +1,7 @@
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Wedge
+import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Wedge
 
 # Set style
 sns.set_style("whitegrid")
@@ -29,20 +29,20 @@ colors = {
 def draw_box(ax, x, y, width, height, text, color, style='round'):
     """Draw a rounded rectangle box"""
     box = FancyBboxPatch((x - width/2, y - height/2), width, height,
-                         boxstyle=f"round,pad=0.1" if style == 'round' else "round,pad=0.05",
+                         boxstyle="round,pad=0.1" if style == 'round' else "round,pad=0.05",
                          linewidth=2, edgecolor='black', facecolor=color,
                          alpha=0.8, zorder=2)
     ax.add_patch(box)
-    ax.text(x, y, text, ha='center', va='center', fontsize=9, 
+    ax.text(x, y, text, ha='center', va='center', fontsize=9,
             weight='bold', zorder=3, wrap=True)
 
 def draw_oval(ax, x, y, width, height, text, color):
     """Draw an oval shape"""
-    ellipse = mpatches.Ellipse((x, y), width, height, 
-                               linewidth=2, edgecolor='black', 
+    ellipse = mpatches.Ellipse((x, y), width, height,
+                               linewidth=2, edgecolor='black',
                                facecolor=color, alpha=0.8, zorder=2)
     ax.add_patch(ellipse)
-    ax.text(x, y, text, ha='center', va='center', 
+    ax.text(x, y, text, ha='center', va='center',
             fontsize=10, weight='bold', zorder=3)
 
 def draw_diamond(ax, x, y, width, height, text, color):
@@ -57,7 +57,7 @@ def draw_diamond(ax, x, y, width, height, text, color):
                               edgecolor='black', facecolor=color,
                               alpha=0.8, zorder=2)
     ax.add_patch(diamond)
-    ax.text(x, y, text, ha='center', va='center', 
+    ax.text(x, y, text, ha='center', va='center',
             fontsize=8, weight='bold', zorder=3)
 
 def draw_arrow(ax, x1, y1, x2, y2, label=''):
@@ -68,9 +68,9 @@ def draw_arrow(ax, x1, y1, x2, y2, label=''):
     ax.add_patch(arrow)
     if label:
         mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
-        ax.text(mid_x + 0.3, mid_y, label, fontsize=8, 
-                style='italic', bbox=dict(boxstyle='round,pad=0.3', 
-                facecolor='white', edgecolor='none'))
+        ax.text(mid_x + 0.3, mid_y, label, fontsize=8,
+                style='italic', bbox={"boxstyle": 'round,pad=0.3',
+                "facecolor": 'white', "edgecolor": 'none'})
 
 # Y positions
 y_pos = 48
@@ -220,7 +220,7 @@ draw_arrow(ax, 5, y_pos + y_step - 0.5, 5, y_pos + 0.5)
 draw_oval(ax, 5, y_pos, 2.5, 1, 'Pipeline Complete', colors['start_end'])
 
 # Add title
-plt.title('Pest Classification Pipeline - Complete Flow', 
+plt.title('Pest Classification Pipeline - Complete Flow',
           fontsize=16, weight='bold', pad=20)
 
 # Add legend
@@ -233,7 +233,7 @@ legend_elements = [
     mpatches.Patch(facecolor=colors['onnx'], edgecolor='black', label='ONNX Export'),
     mpatches.Patch(facecolor=colors['decision'], edgecolor='black', label='Decision Point')
 ]
-ax.legend(handles=legend_elements, loc='upper right', 
+ax.legend(handles=legend_elements, loc='upper right',
           fontsize=9, framealpha=0.9)
 
 plt.tight_layout()

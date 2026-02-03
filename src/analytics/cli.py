@@ -22,23 +22,23 @@ from typing import Optional
 def print_summary():
     """Print quick summary to console."""
     from .performance_analytics import PerformanceAnalytics
-    
+
     analytics = PerformanceAnalytics()
     overall = analytics.get_overall_metrics()
     class_metrics = analytics.get_class_metrics()
     trends = analytics.get_improvement_trends()
-    
+
     print("\n" + "=" * 60)
     print("  INTELLI-PEST PERFORMANCE SUMMARY")
     print("=" * 60)
-    
-    print(f"\n📊 OVERALL METRICS")
+
+    print("\n📊 OVERALL METRICS")
     print(f"   Total Predictions: {overall['total_predictions']:,}")
     print(f"   Correct: {overall['correct']:,}")
     print(f"   Incorrect: {overall['incorrect']:,}")
     print(f"   ✅ Accuracy: {overall['accuracy']:.1%}")
     print(f"   🎯 Avg Confidence: {overall['avg_confidence']:.1%}")
-    
+
     if 'overall_trend' in trends:
         trend = trends['overall_trend']
         if trend['trend'] == 'improving':
@@ -51,113 +51,114 @@ def print_summary():
         print(f"   Recent: {trend['recent_accuracy']:.1%}")
         print(f"   Earlier: {trend['earlier_accuracy']:.1%}")
         print(f"   Change: {trend['improvement']:+.1%}")
-    
-    print(f"\n📋 PER-CLASS ACCURACY (Top 5)")
+
+    print("\n📋 PER-CLASS ACCURACY (Top 5)")
     sorted_classes = sorted(class_metrics.items(), key=lambda x: -x[1].accuracy)
     for cls, metrics in sorted_classes[:5]:
         status = "🟢" if metrics.accuracy >= 0.8 else "🟡" if metrics.accuracy >= 0.6 else "🔴"
         print(f"   {status} {cls}: {metrics.accuracy:.1%} ({metrics.total_predictions} predictions)")
-    
+
     if len(sorted_classes) > 5:
-        print(f"\n📋 NEEDS ATTENTION (Bottom 3)")
+        print("\n📋 NEEDS ATTENTION (Bottom 3)")
         for cls, metrics in sorted_classes[-3:]:
             status = "🔴" if metrics.accuracy < 0.6 else "🟡" if metrics.accuracy < 0.8 else "🟢"
             print(f"   {status} {cls}: {metrics.accuracy:.1%} ({metrics.total_predictions} predictions)")
-    
+
     print("\n" + "=" * 60)
     print()
 
 
-def generate_full_report(output_dir: Optional[str] = None):
+def generate_full_report(output_dir: str | None = None):
     """Generate comprehensive report."""
     from .performance_dashboard import PerformanceDashboard
-    
+
     dashboard = PerformanceDashboard()
-    
+
     if output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = str(Path(__file__).parent.parent.parent / "feedback_data" / "analytics" / f"report_{timestamp}")
-    
-    print(f"\n📊 Generating full report...")
+
+    print("\n📊 Generating full report...")
     print(f"   Output: {output_dir}")
-    
+
     result = dashboard.generate_full_report(output_dir=str(output_dir))
-    
-    print(f"\n✅ Report generated successfully!")
+
+    print("\n✅ Report generated successfully!")
     print(f"   📈 Charts: {len(result['charts'])} files")
     print(f"   📄 Reports: {len(result['reports'])} files")
     print(f"   📋 Exports: {len(result['exports'])} files")
-    
+
     # Print file locations
     if result['reports']:
         print(f"\n📄 Main report: {result['reports'][0]}")
-    
+
     return result
 
 
-def generate_charts_only(output_dir: Optional[str] = None):
+def generate_charts_only(output_dir: str | None = None):
     """Generate charts only."""
     from .performance_dashboard import PerformanceDashboard
-    
+
     dashboard = PerformanceDashboard()
-    
+
     if output_dir:
         dashboard.charts_dir = Path(output_dir)
         dashboard.charts_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"\n📊 Generating charts...")
+
+    print("\n📊 Generating charts...")
     charts = dashboard.generate_all_charts()
-    
+
     print(f"\n✅ Generated {len(charts)} charts:")
     for chart in charts:
         print(f"   📈 {chart}")
-    
+
     return charts
 
 
-def export_csv_only(output_dir: Optional[str] = None):
+def export_csv_only(output_dir: str | None = None):
     """Export CSV files only."""
     from .performance_dashboard import PerformanceDashboard
-    
+
     dashboard = PerformanceDashboard()
-    
+
     if output_dir:
         dashboard.exports_dir = Path(output_dir)
         dashboard.exports_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"\n📋 Exporting CSV files...")
+
+    print("\n📋 Exporting CSV files...")
     exports = dashboard.export_all_csv()
-    
+
     print(f"\n✅ Exported {len(exports)} CSV files:")
     for export in exports:
         print(f"   📄 {export}")
-    
+
     return exports
 
 
 def launch_dashboard(port: int = 8050):
     """Launch interactive HTML dashboard."""
-    from .performance_analytics import PerformanceAnalytics
-    from .performance_dashboard import PerformanceDashboard
-    import webbrowser
     import http.server
     import threading
-    
+    import webbrowser
+
+    from .performance_analytics import PerformanceAnalytics
+    from .performance_dashboard import PerformanceDashboard
+
     # Generate latest charts
     dashboard = PerformanceDashboard()
     dashboard.generate_all_charts()
     dashboard.generate_markdown_report()
-    
+
     # Create simple HTML dashboard
     html_content = create_dashboard_html(dashboard)
-    
+
     html_path = dashboard.data_dir / "dashboard.html"
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
+
     print(f"\n🌐 Dashboard generated: {html_path}")
-    print(f"   Opening in browser...")
-    
+    print("   Opening in browser...")
+
     webbrowser.open(f"file://{html_path}")
 
 
@@ -167,7 +168,7 @@ def create_dashboard_html(dashboard) -> str:
     overall = analytics.get_overall_metrics()
     class_metrics = analytics.get_class_metrics()
     trends = analytics.get_improvement_trends()
-    
+
     # Build class rows
     class_rows = ""
     for cls, metrics in sorted(class_metrics.items(), key=lambda x: -x[1].accuracy):
@@ -182,7 +183,7 @@ def create_dashboard_html(dashboard) -> str:
             <td>{metrics.f1_score:.2f}</td>
         </tr>
         """
-    
+
     # Trend info
     trend_html = ""
     if 'overall_trend' in trends:
@@ -195,7 +196,7 @@ def create_dashboard_html(dashboard) -> str:
             <p>Change: {trend['improvement']:+.1%}</p>
         </div>
         """
-    
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -204,7 +205,7 @@ def create_dashboard_html(dashboard) -> str:
     <title>Intelli-PEST Performance Dashboard</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ 
+        body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             background: #f5f5f5;
             color: #333;
@@ -221,7 +222,7 @@ def create_dashboard_html(dashboard) -> str:
         }}
         header h1 {{ font-size: 2.5rem; margin-bottom: 10px; }}
         header p {{ opacity: 0.9; }}
-        
+
         .metrics-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -238,7 +239,7 @@ def create_dashboard_html(dashboard) -> str:
         .metric-card h3 {{ color: #666; font-size: 0.9rem; margin-bottom: 10px; }}
         .metric-card .value {{ font-size: 2rem; font-weight: bold; color: #2d5016; }}
         .metric-card.accuracy .value {{ color: #4a7c23; }}
-        
+
         .trend-card {{
             padding: 15px;
             border-radius: 10px;
@@ -248,7 +249,7 @@ def create_dashboard_html(dashboard) -> str:
         .trend-card.improving {{ background: #d4edda; color: #155724; }}
         .trend-card.declining {{ background: #f8d7da; color: #721c24; }}
         .trend-card.stable {{ background: #fff3cd; color: #856404; }}
-        
+
         .charts-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
@@ -263,7 +264,7 @@ def create_dashboard_html(dashboard) -> str:
         }}
         .chart-card h3 {{ margin-bottom: 15px; color: #333; }}
         .chart-card img {{ width: 100%; height: auto; border-radius: 5px; }}
-        
+
         table {{
             width: 100%;
             border-collapse: collapse;
@@ -278,14 +279,14 @@ def create_dashboard_html(dashboard) -> str:
         tr.good td:nth-child(3) {{ color: #155724; font-weight: bold; }}
         tr.warning td:nth-child(3) {{ color: #856404; font-weight: bold; }}
         tr.bad td:nth-child(3) {{ color: #721c24; font-weight: bold; }}
-        
+
         .section {{ margin-bottom: 40px; }}
-        .section h2 {{ 
+        .section h2 {{
             margin-bottom: 20px;
             padding-bottom: 10px;
             border-bottom: 2px solid #4a7c23;
         }}
-        
+
         footer {{
             text-align: center;
             padding: 20px;
@@ -301,7 +302,7 @@ def create_dashboard_html(dashboard) -> str:
             <p>Performance Correction Tracking System</p>
             <p>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
         </header>
-        
+
         <div class="metrics-grid">
             <div class="metric-card">
                 <h3>Total Predictions</h3>
@@ -324,9 +325,9 @@ def create_dashboard_html(dashboard) -> str:
                 <div class="value">{overall['avg_confidence']:.1%}</div>
             </div>
         </div>
-        
+
         {trend_html}
-        
+
         <div class="section">
             <h2>📈 Performance Charts</h2>
             <div class="charts-grid">
@@ -348,7 +349,7 @@ def create_dashboard_html(dashboard) -> str:
                 </div>
             </div>
         </div>
-        
+
         <div class="section">
             <h2>📊 Per-Class Performance</h2>
             <table>
@@ -367,14 +368,14 @@ def create_dashboard_html(dashboard) -> str:
                 </tbody>
             </table>
         </div>
-        
+
         <footer>
             <p>Intelli-PEST Analytics System | Performance Correction Tracking</p>
         </footer>
     </div>
 </body>
 </html>"""
-    
+
     return html
 
 
@@ -391,43 +392,43 @@ Examples:
   python -m src.analytics.cli dashboard   Open interactive dashboard
         """
     )
-    
+
     parser.add_argument(
         "command",
         choices=["summary", "report", "charts", "csv", "dashboard"],
         help="Command to run"
     )
-    
+
     parser.add_argument(
         "-o", "--output",
         help="Output directory for generated files"
     )
-    
+
     parser.add_argument(
         "-p", "--port",
         type=int,
         default=8050,
         help="Port for dashboard server (default: 8050)"
     )
-    
+
     args = parser.parse_args()
-    
+
     try:
         if args.command == "summary":
             print_summary()
-        
+
         elif args.command == "report":
             generate_full_report(args.output)
-        
+
         elif args.command == "charts":
             generate_charts_only(args.output)
-        
+
         elif args.command == "csv":
             export_csv_only(args.output)
-        
+
         elif args.command == "dashboard":
             launch_dashboard(args.port)
-        
+
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback

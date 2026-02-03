@@ -28,25 +28,25 @@ def setup_logging(level: str = "INFO"):
 def start_ngrok(port: int, auth_token: str = None) -> str:
     """
     Start ngrok tunnel.
-    
+
     Args:
         port: Local port to tunnel
         auth_token: Ngrok auth token
-        
+
     Returns:
         Public URL
     """
     try:
-        from pyngrok import ngrok, conf
-        
+        from pyngrok import conf, ngrok
+
         if auth_token:
             conf.get_default().auth_token = auth_token
-        
+
         # Start tunnel
         public_url = ngrok.connect(port, "http")
-        
+
         return str(public_url)
-        
+
     except ImportError:
         raise ImportError("pyngrok is not installed. Install with: pip install pyngrok")
 
@@ -62,7 +62,7 @@ Examples:
   python start_ngrok.py --model models/model.pth --auth-token YOUR_NGROK_TOKEN
         """,
     )
-    
+
     parser.add_argument(
         "--model",
         type=str,
@@ -102,55 +102,56 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level (default: INFO)",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     setup_logging(args.log_level)
     logger = logging.getLogger(__name__)
-    
+
     # Validate model path
     if not args.model:
         logger.error("Model path is required. Use --model or set MODEL_PATH environment variable.")
         sys.exit(1)
-    
+
     model_path = Path(args.model)
     if not model_path.exists():
         logger.error(f"Model file not found: {model_path}")
         sys.exit(1)
-    
+
     # Start ngrok
     logger.info("Starting ngrok tunnel...")
     try:
         public_url = start_ngrok(args.port, args.auth_token)
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
         logger.info(f"NGROK PUBLIC URL: {public_url}")
-        logger.info(f"=" * 60)
-        logger.info(f"Share this URL with your Android app!")
+        logger.info("=" * 60)
+        logger.info("Share this URL with your Android app!")
         logger.info(f"API Endpoint: {public_url}/api/v1/predict")
         logger.info(f"Health Check: {public_url}/api/v1/health")
         logger.info(f"Documentation: {public_url}/docs (FastAPI only)")
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
     except ImportError as e:
         logger.error(str(e))
         sys.exit(1)
     except Exception as e:
         logger.error(f"Failed to start ngrok: {e}")
         sys.exit(1)
-    
+
     # Start server
     logger.info(f"Starting {args.framework} server on port {args.port}...")
-    
+
     try:
         if args.framework == "fastapi":
             import uvicorn
+
             from inference_server.fastapi_app import create_app
-            
+
             app = create_app(
                 model_path=str(model_path),
                 model_format=args.format,
             )
-            
+
             uvicorn.run(
                 app,
                 host="0.0.0.0",
@@ -159,19 +160,19 @@ Examples:
             )
         else:
             from inference_server.flask_app import create_app
-            
+
             app = create_app(
                 model_path=str(model_path),
                 model_format=args.format,
             )
-            
+
             app.run(
                 host="0.0.0.0",
                 port=args.port,
                 debug=False,
                 threaded=True,
             )
-            
+
     except KeyboardInterrupt:
         logger.info("Shutting down...")
     except Exception as e:

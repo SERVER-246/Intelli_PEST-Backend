@@ -6,11 +6,11 @@ Tests for the FastAPI endpoints using TestClient.
 Run with: python -m pytest tests/test_api_endpoints.py -v
 """
 
-import unittest
-import sys
 import os
+import sys
+import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 # Set up path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -23,21 +23,22 @@ os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')
 
 class TestAPIEndpoints(unittest.TestCase):
     """Test API endpoints using FastAPI TestClient."""
-    
+
     @classmethod
     def setUpClass(cls):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
+
             from inference_server.fastapi_app import create_app
-            
+
             # Create app instance (app is None by default, need to call create_app)
             app = create_app()
             if app is None:
                 cls.client_available = False
                 cls.skip_reason = "create_app() returned None"
                 return
-            
+
             cls.client = TestClient(app)
             cls.client_available = True
         except ImportError as e:
@@ -46,31 +47,31 @@ class TestAPIEndpoints(unittest.TestCase):
         except Exception as e:
             cls.client_available = False
             cls.skip_reason = f"App initialization failed: {e}"
-    
+
     def setUp(self):
         """Skip if client not available."""
         if not self.client_available:
             self.skipTest(self.skip_reason)
-    
+
     def test_health_endpoint(self):
         """Test /health endpoint."""
         response = self.client.get("/health")
         self.assertIn(response.status_code, [200, 404])
-        
+
         if response.status_code == 200:
             data = response.json()
             self.assertIn('status', data)
-    
+
     def test_root_endpoint(self):
         """Test root endpoint."""
         response = self.client.get("/")
         self.assertIn(response.status_code, [200, 404, 307])
-    
+
     def test_docs_endpoint(self):
         """Test /docs endpoint (Swagger UI)."""
         response = self.client.get("/docs")
         self.assertIn(response.status_code, [200, 404])
-    
+
     def test_openapi_endpoint(self):
         """Test /openapi.json endpoint."""
         response = self.client.get("/openapi.json")
@@ -78,13 +79,13 @@ class TestAPIEndpoints(unittest.TestCase):
             data = response.json()
             self.assertIn('openapi', data)
             self.assertIn('info', data)
-    
+
     def test_predict_endpoint_no_file(self):
         """Test /predict endpoint without file returns error."""
         response = self.client.post("/api/v1/predict")
         # Should fail without file
         self.assertIn(response.status_code, [400, 422, 404])
-    
+
     def test_predict_endpoint_invalid_file(self):
         """Test /predict endpoint with invalid file."""
         # Send text file instead of image
@@ -96,34 +97,35 @@ class TestAPIEndpoints(unittest.TestCase):
 
 class TestAPIResponseFormat(unittest.TestCase):
     """Test API response formats."""
-    
+
     @classmethod
     def setUpClass(cls):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
+
             from inference_server.fastapi_app import create_app
-            
+
             app = create_app()
             if app is None:
                 cls.client_available = False
                 cls.skip_reason = "create_app() returned None"
                 return
-            
+
             cls.client = TestClient(app)
             cls.client_available = True
         except Exception as e:
             cls.client_available = False
             cls.skip_reason = str(e)
-    
+
     def setUp(self):
         if not self.client_available:
             self.skipTest(self.skip_reason)
-    
+
     def test_error_response_format(self):
         """Test error responses have proper format."""
         response = self.client.post("/api/v1/predict")
-        
+
         if response.status_code >= 400:
             data = response.json()
             # Should have detail field for FastAPI errors
@@ -135,40 +137,41 @@ class TestAPIResponseFormat(unittest.TestCase):
 
 class TestAPIValidation(unittest.TestCase):
     """Test API input validation."""
-    
+
     @classmethod
     def setUpClass(cls):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
+
             from inference_server.fastapi_app import create_app
-            
+
             app = create_app()
             if app is None:
                 cls.client_available = False
                 cls.skip_reason = "create_app() returned None"
                 return
-            
+
             cls.client = TestClient(app)
             cls.client_available = True
         except Exception as e:
             cls.client_available = False
             cls.skip_reason = str(e)
-    
+
     def setUp(self):
         if not self.client_available:
             self.skipTest(self.skip_reason)
-    
+
     def test_large_file_rejection(self):
         """Test that overly large files are rejected."""
         # Create a fake large file (10MB of zeros)
         large_content = b"0" * (10 * 1024 * 1024)
         files = {"file": ("large.jpg", large_content, "image/jpeg")}
-        
+
         response = self.client.post("/api/v1/predict", files=files)
         # Should either reject or timeout
         self.assertIn(response.status_code, [400, 413, 422, 500, 404])
-    
+
     def test_empty_file_rejection(self):
         """Test that empty files are rejected."""
         files = {"file": ("empty.jpg", b"", "image/jpeg")}
@@ -179,36 +182,37 @@ class TestAPIValidation(unittest.TestCase):
 
 class TestAPIHeaders(unittest.TestCase):
     """Test API response headers."""
-    
+
     @classmethod
     def setUpClass(cls):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
+
             from inference_server.fastapi_app import create_app
-            
+
             app = create_app()
             if app is None:
                 cls.client_available = False
                 cls.skip_reason = "create_app() returned None"
                 return
-            
+
             cls.client = TestClient(app)
             cls.client_available = True
         except Exception as e:
             cls.client_available = False
             cls.skip_reason = str(e)
-    
+
     def setUp(self):
         if not self.client_available:
             self.skipTest(self.skip_reason)
-    
+
     def test_cors_headers(self):
         """Test CORS headers are present."""
         response = self.client.options("/api/v1/predict")
         # CORS might not be configured, so just check it doesn't error
         self.assertIn(response.status_code, [200, 204, 405, 404])
-    
+
     def test_content_type_json(self):
         """Test JSON responses have correct content type."""
         response = self.client.get("/health")
@@ -219,19 +223,20 @@ class TestAPIHeaders(unittest.TestCase):
 
 class TestMockedPrediction(unittest.TestCase):
     """Test prediction with mocked inference engine."""
-    
+
     def test_mock_prediction_response(self):
         """Test prediction endpoint with mocked model."""
         try:
             from fastapi.testclient import TestClient
+
             from inference_server.fastapi_app import create_app
-            
+
             # Create app instance
             app = create_app()
             if app is None:
                 self.skipTest("create_app() returned None")
                 return
-            
+
             # Mock the inference pipeline
             mock_result = {
                 'pest_class': 'army worm',
@@ -240,19 +245,19 @@ class TestMockedPrediction(unittest.TestCase):
                 'processing_time_ms': 150.5,
                 'model_version': '1.0.0'
             }
-            
+
             with patch('inference_server.fastapi_app.dependencies.get_pipeline') as mock_pipeline:
                 mock_pipeline.return_value.predict.return_value = mock_result
-                
+
                 client = TestClient(app)
                 # Create a minimal valid JPEG
                 jpeg_header = bytes([0xFF, 0xD8, 0xFF, 0xE0])
                 files = {"file": ("test.jpg", jpeg_header, "image/jpeg")}
-                
+
                 response = client.post("/api/v1/predict", files=files)
                 # May fail validation but shouldn't crash
                 self.assertIn(response.status_code, [200, 400, 422, 500, 404])
-                
+
         except ImportError as e:
             self.skipTest(f"Dependencies not available: {e}")
         except Exception as e:

@@ -5,15 +5,15 @@ Local SQLite database for user management and feedback tracking.
 Replaces JSON file storage with proper relational database.
 """
 
-import sqlite3
-import logging
-import threading
 import json
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional, Any
+import logging
+import sqlite3
+import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class UserRecord:
     """User record from database."""
     user_id: str
-    email: Optional[str] = None
+    email: str | None = None
     device_ids: str = "[]"  # JSON array
     total_submissions: int = 0
     total_feedbacks: int = 0
@@ -33,26 +33,26 @@ class UserRecord:
     locations: str = "[]"  # JSON array
     trust_score: float = 100.0
     is_flagged: bool = False
-    flag_reason: Optional[str] = None
-    flag_timestamp: Optional[str] = None
+    flag_reason: str | None = None
+    flag_timestamp: str | None = None
     corrections_by_class: str = "{}"  # JSON object
     user_type: str = "expert"  # expert, tester, admin
-    notes: Optional[str] = None
-    
+    notes: str | None = None
+
     @property
     def correction_rate(self) -> float:
         if self.total_feedbacks == 0:
             return 0.0
         return self.correction_feedbacks / self.total_feedbacks
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["correction_rate"] = round(self.correction_rate, 4)
         data["device_ids"] = json.loads(self.device_ids)
         data["locations"] = json.loads(self.locations)
         data["corrections_by_class"] = json.loads(self.corrections_by_class)
         return data
-    
+
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "UserRecord":
         return cls(
@@ -79,7 +79,7 @@ class UserRecord:
 class DatabaseManager:
     """
     SQLite database manager for user tracking and feedback storage.
-    
+
     Tables:
     - users: User profiles and statistics
     - submissions: Individual submission records
@@ -87,36 +87,36 @@ class DatabaseManager:
     - image_metadata: Collected image information
     - audit_log: Changes and admin actions
     """
-    
+
     def __init__(self, db_path: str = "./feedback_data/intellipest.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        
+
         # Initialize database
         self._init_database()
-        
+
         logger.info(f"DatabaseManager initialized: {self.db_path}")
-    
+
     @contextmanager
     def _get_connection(self):
         """Get a thread-local database connection."""
         if not hasattr(self._local, 'connection') or self._local.connection is None:
             self._local.connection = sqlite3.connect(str(self.db_path))
             self._local.connection.row_factory = sqlite3.Row
-        
+
         try:
             yield self._local.connection
         except Exception as e:
             self._local.connection.rollback()
             raise e
-    
+
     def _migrate_schema(self, cursor):
         """Migrate existing database schema to add missing columns."""
         # Get list of existing tables
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         existing_tables = {row[0] for row in cursor.fetchall()}
-        
+
         # Define all table migrations: table_name -> [(column_name, column_type), ...]
         table_migrations = {
             'archived_images': [
@@ -146,12 +146,12 @@ class DatabaseManager:
                 ('kd_teachers', 'TEXT'),
             ],
         }
-        
+
         for table_name, columns in table_migrations.items():
             if table_name in existing_tables:
                 cursor.execute(f"PRAGMA table_info({table_name})")
                 existing_cols = {row[1] for row in cursor.fetchall()}
-                
+
                 for col_name, col_type in columns:
                     if col_name not in existing_cols:
                         try:
@@ -159,14 +159,14 @@ class DatabaseManager:
                             logger.info(f"Added column {col_name} to {table_name} table")
                         except sqlite3.OperationalError as e:
                             logger.warning(f"Could not add column {col_name} to {table_name}: {e}")
-        
+
         logger.debug("Schema migration completed")
-    
+
     def _init_database(self):
         """Initialize database schema."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Users table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -191,7 +191,7 @@ class DatabaseManager:
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Submissions table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS submissions (
@@ -210,7 +210,7 @@ class DatabaseManager:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             """)
-            
+
             # Feedback entries table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS feedback_entries (
@@ -232,7 +232,7 @@ class DatabaseManager:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             """)
-            
+
             # Image metadata table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS image_metadata (
@@ -261,7 +261,7 @@ class DatabaseManager:
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             """)
-            
+
             # Audit log for tracking changes
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS audit_log (
@@ -276,7 +276,7 @@ class DatabaseManager:
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_submissions_user ON submissions(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_submissions_image ON submissions(image_hash)")
@@ -284,9 +284,9 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_image ON feedback_entries(image_hash)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_status ON image_metadata(feedback_status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_type ON users(user_type)")
-            
+
             # ==================== Training Tables ====================
-            
+
             # Training runs table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS training_runs (
@@ -317,7 +317,7 @@ class DatabaseManager:
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Training events/logs table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS training_events (
@@ -334,7 +334,7 @@ class DatabaseManager:
                     FOREIGN KEY (run_id) REFERENCES training_runs(run_id)
                 )
             """)
-            
+
             # Archived images tracking
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS archived_images (
@@ -350,7 +350,7 @@ class DatabaseManager:
                     FOREIGN KEY (training_run_id) REFERENCES training_runs(run_id)
                 )
             """)
-            
+
             # System events table (server start, scheduler, etc.)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS system_events (
@@ -363,7 +363,7 @@ class DatabaseManager:
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Scheduler checks table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS scheduler_checks (
@@ -379,44 +379,44 @@ class DatabaseManager:
                     reason TEXT
                 )
             """)
-            
+
             # Schema migration: Add missing columns to existing tables
             self._migrate_schema(cursor)
-            
+
             # Create training indexes (only if columns exist)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_training_runs_type ON training_runs(training_type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_training_runs_status ON training_runs(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_training_events_run ON training_events(run_id)")
-            
+
             # Check if archived_images has training_run_id before creating index
             cursor.execute("PRAGMA table_info(archived_images)")
             archived_cols = [row[1] for row in cursor.fetchall()]
             if 'training_run_id' in archived_cols:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_archived_images_run ON archived_images(training_run_id)")
-            
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_events_type ON system_events(event_type)")
-            
+
             conn.commit()
             logger.info("Database schema initialized")
-    
+
     # ==================== User Operations ====================
-    
+
     def get_or_create_user(
         self,
         user_id: str,
-        email: Optional[str] = None,
-        device_id: Optional[str] = None,
+        email: str | None = None,
+        device_id: str | None = None,
         user_type: str = "expert"
     ) -> UserRecord:
         """Get existing user or create new one."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
-            
+
             now = datetime.utcnow().isoformat() + "Z"
-            
+
             if row is None:
                 # Create new user
                 device_ids = json.dumps([device_id] if device_id else [])
@@ -425,10 +425,10 @@ class DatabaseManager:
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (user_id, email, device_ids, now, now, user_type))
                 conn.commit()
-                
+
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
                 row = cursor.fetchone()
-                
+
                 self._log_audit(conn, "user_created", "user", user_id)
             else:
                 # Update existing user
@@ -440,15 +440,15 @@ class DatabaseManager:
                     if device_id not in device_ids:
                         device_ids.append(device_id)
                         updates.append(f"device_ids = '{json.dumps(device_ids)}'")
-                
+
                 cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?", (user_id,))
                 conn.commit()
-                
+
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
                 row = cursor.fetchone()
-            
+
             return UserRecord.from_row(row)
-    
+
     def update_user_stats(
         self,
         user_id: str,
@@ -457,22 +457,22 @@ class DatabaseManager:
         correct_delta: int = 0,
         correction_delta: int = 0,
         trust_delta: float = 0.0,
-        location: Optional[Dict[str, float]] = None,
-        correction_class: Optional[str] = None,
+        location: dict[str, float] | None = None,
+        correction_class: str | None = None,
     ):
         """Update user statistics."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             if not row:
                 return
-            
+
             # Build update
             updates = []
             now = datetime.utcnow().isoformat() + "Z"
-            
+
             if submissions_delta:
                 updates.append(f"total_submissions = total_submissions + {submissions_delta}")
             if feedbacks_delta:
@@ -484,9 +484,9 @@ class DatabaseManager:
             if trust_delta:
                 new_trust = max(0, min(120, row["trust_score"] + trust_delta))
                 updates.append(f"trust_score = {new_trust}")
-            
+
             updates.append(f"last_seen = '{now}'")
-            
+
             # Handle location update
             if location:
                 locations = json.loads(row["locations"])
@@ -494,45 +494,45 @@ class DatabaseManager:
                 if len(locations) > 100:
                     locations = locations[-100:]
                 updates.append(f"locations = '{json.dumps(locations)}'")
-            
+
             # Handle corrections by class
             if correction_class:
                 corrections = json.loads(row["corrections_by_class"])
                 corrections[correction_class] = corrections.get(correction_class, 0) + 1
                 updates.append(f"corrections_by_class = '{json.dumps(corrections)}'")
-            
+
             if updates:
                 cursor.execute(f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?", (user_id,))
                 conn.commit()
-    
-    def get_user(self, user_id: str) -> Optional[UserRecord]:
+
+    def get_user(self, user_id: str) -> UserRecord | None:
         """Get user by ID."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
             return UserRecord.from_row(row) if row else None
-    
-    def get_all_users(self) -> List[Dict[str, Any]]:
+
+    def get_all_users(self) -> list[dict[str, Any]]:
         """Get all users."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users ORDER BY last_seen DESC")
             return [UserRecord.from_row(row).to_dict() for row in cursor.fetchall()]
-    
-    def get_flagged_users(self) -> List[Dict[str, Any]]:
+
+    def get_flagged_users(self) -> list[dict[str, Any]]:
         """Get all flagged users."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE is_flagged = 1")
             return [UserRecord.from_row(row).to_dict() for row in cursor.fetchall()]
-    
+
     def unflag_user(self, user_id: str, admin_note: str = "") -> bool:
         """Unflag a user."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE users SET 
+                UPDATE users SET
                     is_flagged = 0,
                     flag_reason = ?,
                     trust_score = 100.0,
@@ -540,36 +540,36 @@ class DatabaseManager:
                 WHERE user_id = ?
             """, (f"Unflagged: {admin_note}" if admin_note else None,
                   datetime.utcnow().isoformat() + "Z", user_id))
-            
+
             if cursor.rowcount > 0:
                 self._log_audit(conn, "user_unflagged", "user", user_id, notes=admin_note)
                 conn.commit()
                 return True
             return False
-    
+
     def unflag_all_users(self, admin_note: str = "Disabled flagging - all users are trusted experts") -> int:
         """Unflag all users at once."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             now = datetime.utcnow().isoformat() + "Z"
-            
+
             cursor.execute("""
-                UPDATE users SET 
+                UPDATE users SET
                     is_flagged = 0,
                     flag_reason = ?,
                     trust_score = 100.0,
                     updated_at = ?
                 WHERE is_flagged = 1
             """, (f"Unflagged: {admin_note}", now))
-            
+
             count = cursor.rowcount
             if count > 0:
-                self._log_audit(conn, "bulk_unflag", "users", None, 
+                self._log_audit(conn, "bulk_unflag", "users", None,
                                new_value=str(count), notes=admin_note)
                 conn.commit()
-            
+
             return count
-    
+
     def set_user_type(self, user_id: str, user_type: str) -> bool:
         """Set user type (expert, tester, admin)."""
         with self._get_connection() as conn:
@@ -578,27 +578,27 @@ class DatabaseManager:
                 UPDATE users SET user_type = ?, updated_at = ?
                 WHERE user_id = ?
             """, (user_type, datetime.utcnow().isoformat() + "Z", user_id))
-            
+
             if cursor.rowcount > 0:
                 self._log_audit(conn, "user_type_changed", "user", user_id, new_value=user_type)
                 conn.commit()
                 return True
             return False
-    
+
     # ==================== Submission Operations ====================
-    
+
     def record_submission(
         self,
         user_id: str,
         image_hash: str,
-        predicted_class: Optional[str] = None,
-        predicted_class_id: Optional[int] = None,
-        confidence: Optional[float] = None,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
-        device_id: Optional[str] = None,
-        app_version: Optional[str] = None,
-        request_id: Optional[str] = None,
+        predicted_class: str | None = None,
+        predicted_class_id: int | None = None,
+        confidence: float | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        device_id: str | None = None,
+        app_version: str | None = None,
+        request_id: str | None = None,
     ) -> int:
         """Record a new submission."""
         with self._get_connection() as conn:
@@ -612,9 +612,9 @@ class DatabaseManager:
                   confidence, latitude, longitude, device_id, app_version, request_id))
             conn.commit()
             return cursor.lastrowid
-    
+
     # ==================== Feedback Operations ====================
-    
+
     def record_feedback(
         self,
         feedback_id: str,
@@ -624,11 +624,11 @@ class DatabaseManager:
         predicted_class_id: int,
         confidence: float,
         is_correct: bool,
-        corrected_class: Optional[str] = None,
-        corrected_class_id: Optional[int] = None,
-        user_comment: Optional[str] = None,
-        device_info: Optional[str] = None,
-        app_version: Optional[str] = None,
+        corrected_class: str | None = None,
+        corrected_class_id: int | None = None,
+        user_comment: str | None = None,
+        device_info: str | None = None,
+        app_version: str | None = None,
     ) -> int:
         """Record feedback on a prediction."""
         with self._get_connection() as conn:
@@ -644,40 +644,40 @@ class DatabaseManager:
                   user_comment, device_info, app_version))
             conn.commit()
             return cursor.lastrowid
-    
-    def get_feedback_stats(self) -> Dict[str, Any]:
+
+    def get_feedback_stats(self) -> dict[str, Any]:
         """Get feedback statistics."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute("SELECT COUNT(*) FROM feedback_entries")
             total = cursor.fetchone()[0]
-            
+
             cursor.execute("SELECT COUNT(*) FROM feedback_entries WHERE is_correct = 1")
             correct = cursor.fetchone()[0]
-            
+
             cursor.execute("SELECT COUNT(*) FROM feedback_entries WHERE is_correct = 0")
             corrections = cursor.fetchone()[0]
-            
+
             return {
                 "total_feedback": total,
                 "correct": correct,
                 "corrections": corrections,
                 "correction_rate": corrections / total if total > 0 else 0,
             }
-    
+
     # ==================== Image Metadata Operations ====================
-    
-    def save_image_metadata(self, metadata: Dict[str, Any]):
+
+    def save_image_metadata(self, metadata: dict[str, Any]):
         """Save or update image metadata."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Convert dict fields to JSON strings
             all_probs = metadata.get("all_probabilities")
             if isinstance(all_probs, dict):
                 all_probs = json.dumps(all_probs)
-            
+
             cursor.execute("""
                 INSERT OR REPLACE INTO image_metadata (
                     image_hash, image_path, predicted_class, predicted_class_id,
@@ -712,8 +712,8 @@ class DatabaseManager:
                 metadata.get("file_size_bytes"),
             ))
             conn.commit()
-    
-    def get_image_metadata(self, image_hash: str) -> Optional[Dict[str, Any]]:
+
+    def get_image_metadata(self, image_hash: str) -> dict[str, Any] | None:
         """Get image metadata by hash."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -726,39 +726,39 @@ class DatabaseManager:
                 data["is_trusted_submission"] = bool(data["is_trusted_submission"])
                 return data
             return None
-    
+
     def get_training_images(
         self,
         include_correct: bool = True,
         include_corrected: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get images suitable for training."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             conditions = []
             if include_correct:
                 conditions.append("feedback_status = 'correct'")
             if include_corrected:
                 conditions.append("feedback_status = 'corrected'")
-            
+
             if not conditions:
                 return []
-            
+
             query = f"SELECT * FROM image_metadata WHERE ({' OR '.join(conditions)})"
             cursor.execute(query)
-            
+
             results = []
             for row in cursor.fetchall():
                 data = dict(row)
                 if data.get("all_probabilities"):
                     data["all_probabilities"] = json.loads(data["all_probabilities"])
                 results.append(data)
-            
+
             return results
-    
+
     # ==================== Training Operations ====================
-    
+
     def create_training_run(
         self,
         run_id: str,
@@ -766,12 +766,12 @@ class DatabaseManager:
         model_version: int,
         epochs_planned: int,
         total_images: int = 0,
-        images_per_class: Optional[Dict[str, int]] = None,
+        images_per_class: dict[str, int] | None = None,
         junk_images: int = 0,
-        model_version_string: Optional[str] = None,
+        model_version_string: str | None = None,
         kd_enabled: bool = False,
-        kd_teacher_count: Optional[int] = None,
-        kd_teachers: Optional[List[str]] = None,
+        kd_teacher_count: int | None = None,
+        kd_teachers: list[str] | None = None,
     ) -> int:
         """Create a new training run record."""
         with self._get_connection() as conn:
@@ -792,103 +792,103 @@ class DatabaseManager:
             conn.commit()
             logger.debug(f"Created training run {run_id} in database")
             return cursor.lastrowid
-    
+
     def update_training_run(
         self,
         run_id: str,
-        status: Optional[str] = None,
-        epochs_completed: Optional[int] = None,
-        final_upright_accuracy: Optional[float] = None,
-        final_rotation_accuracy: Optional[float] = None,
-        best_upright_accuracy: Optional[float] = None,
-        best_rotation_accuracy: Optional[float] = None,
+        status: str | None = None,
+        epochs_completed: int | None = None,
+        final_upright_accuracy: float | None = None,
+        final_rotation_accuracy: float | None = None,
+        best_upright_accuracy: float | None = None,
+        best_rotation_accuracy: float | None = None,
         early_stopped: bool = False,
         collapse_detected: bool = False,
         rollback_performed: bool = False,
-        error_message: Optional[str] = None,
-        training_duration_seconds: Optional[float] = None,
-        backup_path: Optional[str] = None,
-        kd_teacher_count: Optional[int] = None,
-        kd_teachers: Optional[List[str]] = None,
+        error_message: str | None = None,
+        training_duration_seconds: float | None = None,
+        backup_path: str | None = None,
+        kd_teacher_count: int | None = None,
+        kd_teachers: list[str] | None = None,
     ):
         """Update a training run record."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             updates = []
             params = []
-            
+
             if status:
                 updates.append("status = ?")
                 params.append(status)
                 if status in ['completed', 'failed', 'cancelled']:
                     updates.append("completed_at = ?")
                     params.append(datetime.utcnow().isoformat() + "Z")
-            
+
             if epochs_completed is not None:
                 updates.append("epochs_completed = ?")
                 params.append(epochs_completed)
-            
+
             if final_upright_accuracy is not None:
                 updates.append("final_upright_accuracy = ?")
                 params.append(final_upright_accuracy)
-            
+
             if final_rotation_accuracy is not None:
                 updates.append("final_rotation_accuracy = ?")
                 params.append(final_rotation_accuracy)
-            
+
             if best_upright_accuracy is not None:
                 updates.append("best_upright_accuracy = ?")
                 params.append(best_upright_accuracy)
-            
+
             if best_rotation_accuracy is not None:
                 updates.append("best_rotation_accuracy = ?")
                 params.append(best_rotation_accuracy)
-            
+
             if early_stopped:
                 updates.append("early_stopped = 1")
-            
+
             if collapse_detected:
                 updates.append("collapse_detected = 1")
-            
+
             if rollback_performed:
                 updates.append("rollback_performed = 1")
-            
+
             if error_message:
                 updates.append("error_message = ?")
                 params.append(error_message)
-            
+
             if training_duration_seconds is not None:
                 updates.append("training_duration_seconds = ?")
                 params.append(training_duration_seconds)
-            
+
             if backup_path:
                 updates.append("backup_path = ?")
                 params.append(backup_path)
-            
+
             if kd_teacher_count is not None:
                 updates.append("kd_teacher_count = ?")
                 params.append(kd_teacher_count)
-            
+
             if kd_teachers is not None:
                 updates.append("kd_teachers = ?")
                 params.append(json.dumps(kd_teachers))
-            
+
             if updates:
                 params.append(run_id)
                 cursor.execute(f"UPDATE training_runs SET {', '.join(updates)} WHERE run_id = ?", params)
                 conn.commit()
-    
+
     def log_training_event(
         self,
         run_id: str,
         event_type: str,
         message: str,
-        epoch: Optional[int] = None,
-        batch: Optional[int] = None,
-        metric_name: Optional[str] = None,
-        metric_value: Optional[float] = None,
-        event_data: Optional[Dict[str, Any]] = None,
+        epoch: int | None = None,
+        batch: int | None = None,
+        metric_name: str | None = None,
+        metric_value: float | None = None,
+        event_data: dict[str, Any] | None = None,
     ):
         """Log a training event."""
         with self._get_connection() as conn:
@@ -903,7 +903,7 @@ class DatabaseManager:
                 metric_name, metric_value, json.dumps(event_data) if event_data else None
             ))
             conn.commit()
-    
+
     def log_archived_image(
         self,
         image_hash: str,
@@ -925,14 +925,14 @@ class DatabaseManager:
             """, (image_hash, original_path, archive_path, training_run_id,
                   training_type, class_name, source_folder))
             conn.commit()
-    
+
     def log_system_event(
         self,
         event_type: str,
         component: str,
         message: str,
         severity: str = "info",
-        event_data: Optional[Dict[str, Any]] = None,
+        event_data: dict[str, Any] | None = None,
     ):
         """Log a system event."""
         with self._get_connection() as conn:
@@ -943,17 +943,17 @@ class DatabaseManager:
             """, (event_type, component, message, severity,
                   json.dumps(event_data) if event_data else None))
             conn.commit()
-    
+
     def log_scheduler_check(
         self,
         total_feedback_images: int,
-        images_per_class: Dict[str, int],
+        images_per_class: dict[str, int],
         classes_with_images: int,
         threshold_met: bool,
         comprehensive_threshold_met: bool,
         training_triggered: bool,
-        training_type: Optional[str] = None,
-        reason: Optional[str] = None,
+        training_type: str | None = None,
+        reason: str | None = None,
     ):
         """Log a scheduler check."""
         with self._get_connection() as conn:
@@ -970,8 +970,8 @@ class DatabaseManager:
                 1 if training_triggered else 0, training_type, reason
             ))
             conn.commit()
-    
-    def get_training_runs(self, limit: int = 50) -> List[Dict[str, Any]]:
+
+    def get_training_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         """Get recent training runs."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -985,8 +985,8 @@ class DatabaseManager:
                     data["images_per_class"] = json.loads(data["images_per_class"])
                 results.append(data)
             return results
-    
-    def get_training_events(self, run_id: str) -> List[Dict[str, Any]]:
+
+    def get_training_events(self, run_id: str) -> list[dict[str, Any]]:
         """Get events for a training run."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -1000,8 +1000,8 @@ class DatabaseManager:
                     data["event_data"] = json.loads(data["event_data"])
                 results.append(data)
             return results
-    
-    def get_scheduler_checks(self, limit: int = 100) -> List[Dict[str, Any]]:
+
+    def get_scheduler_checks(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get recent scheduler checks."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -1015,8 +1015,8 @@ class DatabaseManager:
                     data["images_per_class"] = json.loads(data["images_per_class"])
                 results.append(data)
             return results
-    
-    def get_system_events(self, limit: int = 100, severity: Optional[str] = None) -> List[Dict[str, Any]]:
+
+    def get_system_events(self, limit: int = 100, severity: str | None = None) -> list[dict[str, Any]]:
         """Get system events."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -1035,12 +1035,12 @@ class DatabaseManager:
                     data["event_data"] = json.loads(data["event_data"])
                 results.append(data)
             return results
-    
-    def get_training_stats(self) -> Dict[str, Any]:
+
+    def get_training_stats(self) -> dict[str, Any]:
         """Get comprehensive training statistics."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Total training runs by type
             cursor.execute("""
                 SELECT training_type, status, COUNT(*) as count
@@ -1052,7 +1052,7 @@ class DatabaseManager:
                 if type_key not in runs_by_type:
                     runs_by_type[type_key] = {}
                 runs_by_type[type_key][row["status"]] = row["count"]
-            
+
             # Average training duration
             cursor.execute("""
                 SELECT training_type, AVG(training_duration_seconds) as avg_duration
@@ -1060,34 +1060,34 @@ class DatabaseManager:
                 GROUP BY training_type
             """)
             avg_durations = {row["training_type"]: row["avg_duration"] for row in cursor.fetchall()}
-            
+
             # Total images archived
             cursor.execute("SELECT COUNT(*) FROM archived_images")
             total_archived = cursor.fetchone()[0]
-            
+
             # Total scheduler checks that triggered training
             cursor.execute("SELECT COUNT(*) FROM scheduler_checks WHERE training_triggered = 1")
             triggered_count = cursor.fetchone()[0]
-            
+
             return {
                 "runs_by_type": runs_by_type,
                 "avg_durations": avg_durations,
                 "total_archived_images": total_archived,
                 "triggered_training_count": triggered_count,
             }
-    
+
     # ==================== Audit Operations ====================
-    
+
     def _log_audit(
         self,
         conn: sqlite3.Connection,
         action: str,
         entity_type: str,
-        entity_id: Optional[str],
-        old_value: Optional[str] = None,
-        new_value: Optional[str] = None,
-        admin_id: Optional[str] = None,
-        notes: Optional[str] = None,
+        entity_id: str | None,
+        old_value: str | None = None,
+        new_value: str | None = None,
+        admin_id: str | None = None,
+        notes: str | None = None,
     ):
         """Log an audit entry."""
         cursor = conn.cursor()
@@ -1095,8 +1095,8 @@ class DatabaseManager:
             INSERT INTO audit_log (action, entity_type, entity_id, old_value, new_value, admin_id, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (action, entity_type, entity_id, old_value, new_value, admin_id, notes))
-    
-    def get_audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
+
+    def get_audit_log(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get recent audit log entries."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -1104,31 +1104,31 @@ class DatabaseManager:
                 SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
-    
+
     # ==================== Migration ====================
-    
-    def migrate_from_json(self, users_dir: str, metadata_dir: Optional[str] = None):
+
+    def migrate_from_json(self, users_dir: str, metadata_dir: str | None = None):
         """Migrate existing JSON data to database."""
         users_path = Path(users_dir)
         migrated_users = 0
         migrated_metadata = 0
-        
+
         # Migrate users
         if users_path.exists():
             for filepath in users_path.glob("*.json"):
                 try:
-                    with open(filepath, "r") as f:
+                    with open(filepath) as f:
                         data = json.load(f)
-                    
+
                     with self._get_connection() as conn:
                         cursor = conn.cursor()
-                        
+
                         # Check if user already exists
-                        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", 
+                        cursor.execute("SELECT user_id FROM users WHERE user_id = ?",
                                       (data["user_id"],))
                         if cursor.fetchone():
                             continue
-                        
+
                         cursor.execute("""
                             INSERT INTO users (
                                 user_id, email, device_ids, total_submissions,
@@ -1159,21 +1159,21 @@ class DatabaseManager:
                         migrated_users += 1
                 except Exception as e:
                     logger.error(f"Failed to migrate user {filepath}: {e}")
-        
+
         # Migrate metadata
         if metadata_dir:
             metadata_path = Path(metadata_dir)
             if metadata_path.exists():
                 for filepath in metadata_path.glob("*.json"):
                     try:
-                        with open(filepath, "r") as f:
+                        with open(filepath) as f:
                             data = json.load(f)
-                        
+
                         self.save_image_metadata(data)
                         migrated_metadata += 1
                     except Exception as e:
                         logger.error(f"Failed to migrate metadata {filepath}: {e}")
-        
+
         self._log_audit(
             self._get_connection().__enter__(),
             "migration_complete",
@@ -1181,10 +1181,10 @@ class DatabaseManager:
             None,
             notes=f"Migrated {migrated_users} users and {migrated_metadata} metadata records"
         )
-        
+
         logger.info(f"Migration complete: {migrated_users} users, {migrated_metadata} metadata records")
         return {"users": migrated_users, "metadata": migrated_metadata}
-    
+
     def close(self):
         """Close database connection."""
         if hasattr(self._local, 'connection') and self._local.connection:
@@ -1193,10 +1193,10 @@ class DatabaseManager:
 
 
 # Global instance
-_database_manager: Optional[DatabaseManager] = None
+_database_manager: DatabaseManager | None = None
 
 
-def get_database_manager() -> Optional[DatabaseManager]:
+def get_database_manager() -> DatabaseManager | None:
     """Get global database manager instance."""
     return _database_manager
 

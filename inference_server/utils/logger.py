@@ -6,14 +6,14 @@ Centralized logging setup for the inference server.
 
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
 
 
 class ColoredFormatter(logging.Formatter):
     """Colored log formatter for console output."""
-    
+
     COLORS = {
         "DEBUG": "\033[36m",     # Cyan
         "INFO": "\033[32m",      # Green
@@ -22,7 +22,7 @@ class ColoredFormatter(logging.Formatter):
         "CRITICAL": "\033[35m",  # Magenta
     }
     RESET = "\033[0m"
-    
+
     def format(self, record):
         # Add color to level name
         color = self.COLORS.get(record.levelname, "")
@@ -32,50 +32,50 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_logging(
     level: str = "INFO",
-    log_file: Optional[Path] = None,
-    log_dir: Optional[Path] = None,
-    format_string: Optional[str] = None,
+    log_file: Path | None = None,
+    log_dir: Path | None = None,
+    format_string: str | None = None,
     colored: bool = True,
 ) -> logging.Logger:
     """
     Set up logging configuration.
-    
+
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: Specific log file path
         log_dir: Directory for log files (auto-named by date)
         format_string: Custom format string
         colored: Use colored console output
-        
+
     Returns:
         Root logger
     """
     # Get log level
     log_level = getattr(logging, level.upper(), logging.INFO)
-    
+
     # Default format
     if format_string is None:
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    
+
     # Create root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
-    
+
     # Clear existing handlers
     root_logger.handlers.clear()
-    
+
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
-    
+
     if colored and sys.stdout.isatty():
         console_formatter = ColoredFormatter(format_string)
     else:
         console_formatter = logging.Formatter(format_string)
-    
+
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
-    
+
     # File handler
     if log_file or log_dir:
         if log_file:
@@ -85,27 +85,27 @@ def setup_logging(
             log_dir.mkdir(parents=True, exist_ok=True)
             date_str = datetime.now().strftime("%Y-%m-%d")
             file_path = log_dir / f"inference_server_{date_str}.log"
-        
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         file_handler = logging.FileHandler(file_path, encoding="utf-8")
         file_handler.setLevel(log_level)
         file_formatter = logging.Formatter(format_string)
         file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
-        
+
         root_logger.info(f"Logging to file: {file_path}")
-    
+
     return root_logger
 
 
 def get_logger(name: str) -> logging.Logger:
     """
     Get a named logger.
-    
+
     Args:
         name: Logger name (typically __name__)
-        
+
     Returns:
         Logger instance
     """
@@ -116,29 +116,29 @@ class RequestLogger:
     """
     Logger for API requests with structured output.
     """
-    
-    def __init__(self, logger: Optional[logging.Logger] = None):
+
+    def __init__(self, logger: logging.Logger | None = None):
         """
         Initialize request logger.
-        
+
         Args:
             logger: Logger instance to use
         """
         self.logger = logger or logging.getLogger("request")
-    
+
     def log_request(
         self,
         request_id: str,
         method: str,
         path: str,
         ip: str,
-        user_agent: Optional[str] = None,
+        user_agent: str | None = None,
     ):
         """Log incoming request."""
         self.logger.info(
             f"REQUEST {request_id} | {method} {path} | IP: {ip} | UA: {user_agent or 'N/A'}"
         )
-    
+
     def log_response(
         self,
         request_id: str,
@@ -151,7 +151,7 @@ class RequestLogger:
             level,
             f"RESPONSE {request_id} | Status: {status_code} | Time: {response_time_ms:.2f}ms"
         )
-    
+
     def log_error(
         self,
         request_id: str,
@@ -162,7 +162,7 @@ class RequestLogger:
         self.logger.error(
             f"ERROR {request_id} | {error_type}: {error_message}"
         )
-    
+
     def log_inference(
         self,
         request_id: str,
@@ -180,7 +180,7 @@ class RequestLogger:
 
 
 # Global request logger
-_request_logger: Optional[RequestLogger] = None
+_request_logger: RequestLogger | None = None
 
 
 def get_request_logger() -> RequestLogger:

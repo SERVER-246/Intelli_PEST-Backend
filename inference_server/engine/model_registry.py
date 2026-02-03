@@ -4,12 +4,13 @@ Model Registry
 Manages available models and their configurations.
 """
 
-import logging
-from pathlib import Path
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field
-import yaml
 import json
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import yaml
 
 from .model_loader import ModelFormat
 
@@ -24,38 +25,38 @@ class RegisteredModel:
     description: str = ""
     version: str = "1.0.0"
     exposed: bool = False  # Whether model is available via public API
-    formats: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    accuracy: Optional[float] = None
-    parameters: Optional[int] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def get_path(self, format: str, base_dir: Path) -> Optional[Path]:
+    formats: dict[str, dict[str, Any]] = field(default_factory=dict)
+    accuracy: float | None = None
+    parameters: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def get_path(self, format: str, base_dir: Path) -> Path | None:
         """Get model file path for a specific format."""
         if format not in self.formats:
             return None
-        
+
         filename = self.formats[format].get("filename")
         if not filename:
             return None
-        
+
         # Check in format-specific subdirectory or model directory
         paths_to_check = [
             base_dir / self.name / filename,
             base_dir / filename,
             base_dir / format / filename,
         ]
-        
+
         for path in paths_to_check:
             if path.exists():
                 return path
-        
+
         return base_dir / self.name / filename  # Return expected path
-    
-    def available_formats(self) -> List[str]:
+
+    def available_formats(self) -> list[str]:
         """Get list of available formats."""
         return list(self.formats.keys())
-    
-    def to_dict(self, include_paths: bool = False, base_dir: Optional[Path] = None) -> Dict[str, Any]:
+
+    def to_dict(self, include_paths: bool = False, base_dir: Path | None = None) -> dict[str, Any]:
         """Convert to dictionary."""
         data = {
             "name": self.name,
@@ -67,40 +68,40 @@ class RegisteredModel:
             "accuracy": self.accuracy,
             "parameters": self.parameters,
         }
-        
+
         if include_paths and base_dir:
             data["paths"] = {
                 fmt: str(self.get_path(fmt, base_dir))
                 for fmt in self.formats
             }
-        
+
         return data
 
 
 class ModelRegistry:
     """
     Registry for managing available models.
-    
+
     Tracks which models are available, their formats, and metadata.
     """
-    
+
     def __init__(
         self,
-        model_dir: Optional[Path] = None,
-        config_path: Optional[Path] = None,
+        model_dir: Path | None = None,
+        config_path: Path | None = None,
     ):
         """
         Initialize model registry.
-        
+
         Args:
             model_dir: Base directory for models
             config_path: Path to model configuration YAML
         """
         self.model_dir = Path(model_dir) if model_dir else Path(__file__).parent.parent / "models"
         self.config_path = config_path
-        
-        self._models: Dict[str, RegisteredModel] = {}
-        
+
+        self._models: dict[str, RegisteredModel] = {}
+
         # Load configuration if provided
         if config_path and Path(config_path).exists():
             self._load_config(config_path)
@@ -109,13 +110,13 @@ class ModelRegistry:
             default_config = Path(__file__).parent.parent / "config" / "model_config.yaml"
             if default_config.exists():
                 self._load_config(default_config)
-    
+
     def _load_config(self, config_path: Path):
         """Load model configuration from YAML."""
         try:
-            with open(config_path, "r") as f:
+            with open(config_path) as f:
                 config = yaml.safe_load(f)
-            
+
             # Register student model
             if "student_model" in config:
                 student = config["student_model"]
@@ -129,7 +130,7 @@ class ModelRegistry:
                     accuracy=student.get("accuracy"),
                     parameters=student.get("parameters"),
                 ))
-            
+
             # Register teacher models
             if "teacher_models" in config:
                 for model_id, model_config in config["teacher_models"].items():
@@ -141,17 +142,17 @@ class ModelRegistry:
                         exposed=model_config.get("exposed", False),
                         formats={fmt: {} for fmt in model_config.get("formats", [])},
                     ))
-            
+
             logger.info(f"Loaded {len(self._models)} models from config")
-            
+
         except Exception as e:
             logger.error(f"Failed to load model config: {e}")
-    
+
     def register(self, model: RegisteredModel):
         """Register a model."""
         self._models[model.name] = model
         logger.debug(f"Registered model: {model.name}")
-    
+
     def unregister(self, name: str) -> bool:
         """Unregister a model."""
         if name in self._models:
@@ -159,48 +160,48 @@ class ModelRegistry:
             logger.debug(f"Unregistered model: {name}")
             return True
         return False
-    
-    def get(self, name: str) -> Optional[RegisteredModel]:
+
+    def get(self, name: str) -> RegisteredModel | None:
         """Get a registered model by name."""
         return self._models.get(name)
-    
-    def get_student_model(self) -> Optional[RegisteredModel]:
+
+    def get_student_model(self) -> RegisteredModel | None:
         """Get the student model."""
         return self._models.get("student")
-    
-    def list_all(self) -> List[RegisteredModel]:
+
+    def list_all(self) -> list[RegisteredModel]:
         """List all registered models."""
         return list(self._models.values())
-    
-    def list_exposed(self) -> List[RegisteredModel]:
+
+    def list_exposed(self) -> list[RegisteredModel]:
         """List only publicly exposed models."""
         return [m for m in self._models.values() if m.exposed]
-    
-    def list_internal(self) -> List[RegisteredModel]:
+
+    def list_internal(self) -> list[RegisteredModel]:
         """List internal (non-exposed) models."""
         return [m for m in self._models.values() if not m.exposed]
-    
+
     def find_model_path(
         self,
         name: str,
         format: str = "onnx",
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """
         Find model file path.
-        
+
         Args:
             name: Model name
             format: Desired format (pytorch, onnx, tflite)
-            
+
         Returns:
             Path to model file or None
         """
         model = self._models.get(name)
         if not model:
             return None
-        
+
         return model.get_path(format, self.model_dir)
-    
+
     def scan_directory(self):
         """
         Scan model directory and update registry with found models.
@@ -208,15 +209,15 @@ class ModelRegistry:
         if not self.model_dir.exists():
             logger.warning(f"Model directory does not exist: {self.model_dir}")
             return
-        
+
         # Look for model files
         extensions = {".pt", ".pth", ".onnx", ".tflite"}
-        
+
         for path in self.model_dir.rglob("*"):
             if path.suffix.lower() in extensions:
                 model_name = path.stem
                 fmt = ModelFormat.from_extension(path.suffix)
-                
+
                 if fmt and model_name not in self._models:
                     # Auto-register found model
                     self.register(RegisteredModel(
@@ -226,14 +227,14 @@ class ModelRegistry:
                         exposed=False,  # Not exposed by default
                     ))
                     logger.info(f"Auto-registered model: {model_name} ({fmt.value})")
-    
-    def to_dict(self, exposed_only: bool = True) -> Dict[str, Any]:
+
+    def to_dict(self, exposed_only: bool = True) -> dict[str, Any]:
         """
         Export registry as dictionary.
-        
+
         Args:
             exposed_only: Only include exposed models
-            
+
         Returns:
             Dictionary representation
         """
@@ -245,7 +246,7 @@ class ModelRegistry:
 
 
 # Global registry instance
-_registry: Optional[ModelRegistry] = None
+_registry: ModelRegistry | None = None
 
 
 def get_model_registry(**kwargs) -> ModelRegistry:

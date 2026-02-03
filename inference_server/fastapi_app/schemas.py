@@ -4,8 +4,8 @@ Pydantic Schemas
 Request and response schemas for the FastAPI application.
 """
 
-from typing import Dict, List, Optional, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 class BaseResponse(BaseModel):
     """Base response model."""
     status: str = Field(..., description="Response status")
-    request_id: Optional[str] = Field(default=None, description="Request identifier")
-    timestamp: Optional[str] = Field(default=None, description="Response timestamp")
+    request_id: str | None = Field(default=None, description="Request identifier")
+    timestamp: str | None = Field(default=None, description="Response timestamp")
 
 
 # Error Response
@@ -23,7 +23,7 @@ class ErrorDetail(BaseModel):
     """Error detail model."""
     code: str = Field(..., description="Error code")
     message: str = Field(..., description="Error message")
-    details: Optional[Dict[str, Any]] = Field(default=None, description="Additional details")
+    details: dict[str, Any] | None = Field(default=None, description="Additional details")
 
 
 class ErrorResponse(BaseResponse):
@@ -37,8 +37,8 @@ class PredictionResult(BaseModel):
     class_name: str = Field(..., alias="class", description="Predicted class name")
     class_id: int = Field(..., description="Predicted class ID")
     confidence: float = Field(..., ge=0, le=1, description="Prediction confidence")
-    all_probabilities: Optional[Dict[str, float]] = Field(default=None, description="All class probabilities")
-    
+    all_probabilities: dict[str, float] | None = Field(default=None, description="All class probabilities")
+
     class Config:
         populate_by_name = True
 
@@ -54,7 +54,7 @@ class ValidationInfo(BaseModel):
     """Image validation info."""
     passed: bool = Field(..., description="Whether validation passed")
     relevance_score: float = Field(..., ge=0, le=1, description="Content relevance score")
-    quality_score: Optional[float] = Field(default=None, description="Image quality score")
+    quality_score: float | None = Field(default=None, description="Image quality score")
 
 
 # ============================================================
@@ -64,9 +64,9 @@ class ValidationInfo(BaseModel):
 class Phase3RegionInfo(BaseModel):
     """Region of interest information from Phase 3 analysis."""
     region_id: int = Field(..., description="Region identifier")
-    bbox: Optional[List[float]] = Field(default=None, description="Bounding box [x1, y1, x2, y2] normalized 0-1")
+    bbox: list[float] | None = Field(default=None, description="Bounding box [x1, y1, x2, y2] normalized 0-1")
     relevance_score: float = Field(..., ge=0, le=1, description="Region relevance score")
-    label: Optional[str] = Field(default=None, description="Region label if identified")
+    label: str | None = Field(default=None, description="Region label if identified")
 
 
 class Phase3MultiLabelPrediction(BaseModel):
@@ -78,54 +78,54 @@ class Phase3MultiLabelPrediction(BaseModel):
 class Phase3AttentionInfo(BaseModel):
     """Attention map information from Phase 3."""
     available: bool = Field(default=False, description="Whether attention map is available")
-    map_uri: Optional[str] = Field(default=None, description="URI to attention map image (base64 or URL)")
-    method: Optional[str] = Field(default=None, description="Attention extraction method (e.g., 'grad_cam', 'attention')")
+    map_uri: str | None = Field(default=None, description="URI to attention map image (base64 or URL)")
+    method: str | None = Field(default=None, description="Attention extraction method (e.g., 'grad_cam', 'attention')")
 
 
 class Phase3Response(BaseModel):
     """
     Phase 3 experimental features response.
-    
+
     These features are EXPERIMENTAL and may change.
     The main prediction should always be trusted over Phase 3 outputs.
     """
     is_experimental: bool = Field(default=True, description="Flag indicating these are experimental features")
     executed: bool = Field(default=False, description="Whether Phase 3 analysis was executed")
-    
+
     # Attention Maps
-    attention: Optional[Phase3AttentionInfo] = Field(default=None, description="Attention map information")
-    
+    attention: Phase3AttentionInfo | None = Field(default=None, description="Attention map information")
+
     # Region Analysis
-    regions: Optional[List[Phase3RegionInfo]] = Field(default=None, description="Regions of interest")
-    top_region_score: Optional[float] = Field(default=None, description="Highest region relevance score")
-    
+    regions: list[Phase3RegionInfo] | None = Field(default=None, description="Regions of interest")
+    top_region_score: float | None = Field(default=None, description="Highest region relevance score")
+
     # Multi-Label Predictions
-    multi_label: Optional[List[Phase3MultiLabelPrediction]] = Field(default=None, description="Multi-label predictions")
-    
+    multi_label: list[Phase3MultiLabelPrediction] | None = Field(default=None, description="Multi-label predictions")
+
     # Metadata
-    processing_time_ms: Optional[float] = Field(default=None, description="Phase 3 processing time")
-    error: Optional[str] = Field(default=None, description="Error message if Phase 3 failed")
+    processing_time_ms: float | None = Field(default=None, description="Phase 3 processing time")
+    error: str | None = Field(default=None, description="Error message if Phase 3 failed")
 
 
 class PredictionResponse(BaseResponse):
     """Single prediction response."""
     prediction: PredictionResult
-    inference: Optional[InferenceInfo] = Field(default=None, description="Inference info (omitted in lite mode)")
-    validation: Optional[ValidationInfo] = None
-    feedback_id: Optional[str] = Field(default=None, description="ID to submit feedback on this prediction")
+    inference: InferenceInfo | None = Field(default=None, description="Inference info (omitted in lite mode)")
+    validation: ValidationInfo | None = None
+    feedback_id: str | None = Field(default=None, description="ID to submit feedback on this prediction")
     # Phase 3: Experimental features (nullable - missing means Phase 3 not enabled/available)
-    phase3: Optional[Phase3Response] = Field(default=None, description="Phase 3 experimental features (attention maps, regions, multi-label)")
+    phase3: Phase3Response | None = Field(default=None, description="Phase 3 experimental features (attention maps, regions, multi-label)")
 
 
 # Batch Prediction Models
 class BatchResultItem(BaseModel):
     """Single item in batch results."""
     index: int = Field(..., description="Index in batch")
-    filename: Optional[str] = Field(default=None, description="Original filename")
+    filename: str | None = Field(default=None, description="Original filename")
     status: str = Field(..., description="Item status")
-    prediction: Optional[PredictionResult] = None
-    error: Optional[str] = Field(default=None, description="Error message if failed")
-    inference_time_ms: Optional[float] = Field(default=None, description="Inference time")
+    prediction: PredictionResult | None = None
+    error: str | None = Field(default=None, description="Error message if failed")
+    inference_time_ms: float | None = Field(default=None, description="Inference time")
 
 
 class BatchSummary(BaseModel):
@@ -140,14 +140,14 @@ class BatchSummary(BaseModel):
 class BatchPredictionResponse(BaseResponse):
     """Batch prediction response."""
     summary: BatchSummary
-    results: List[BatchResultItem]
+    results: list[BatchResultItem]
 
 
 # Health Check
 class ModelInfo(BaseModel):
     """Model information."""
     loaded: bool = Field(..., description="Whether model is loaded")
-    info: Optional[Dict[str, Any]] = Field(default=None, description="Model details")
+    info: dict[str, Any] | None = Field(default=None, description="Model details")
 
 
 class HealthResponse(BaseModel):
@@ -168,9 +168,9 @@ class ClassInfo(BaseModel):
 class ClassesResponse(BaseResponse):
     """Classes list response."""
     num_classes: int = Field(..., description="Number of classes")
-    classes: List[ClassInfo]
-    special_categories: Optional[List[str]] = Field(
-        default=None, 
+    classes: list[ClassInfo]
+    special_categories: list[str] | None = Field(
+        default=None,
         description="Special feedback categories like 'junk', 'unrelated' for non-pest images"
     )
 
@@ -179,14 +179,14 @@ class ClassesResponse(BaseResponse):
 class ExposedModelInfo(BaseModel):
     """Publicly exposed model info."""
     name: str = Field(..., description="Model name")
-    description: Optional[str] = Field(default=None, description="Model description")
-    accuracy: Optional[float] = Field(default=None, description="Model accuracy")
-    formats: List[str] = Field(..., description="Available formats")
+    description: str | None = Field(default=None, description="Model description")
+    accuracy: float | None = Field(default=None, description="Model accuracy")
+    formats: list[str] = Field(..., description="Available formats")
 
 
 class ModelsResponse(BaseResponse):
     """Models list response."""
-    models: List[ExposedModelInfo]
+    models: list[ExposedModelInfo]
 
 
 # Request Bodies
@@ -207,18 +207,18 @@ class FeedbackRequest(BaseModel):
     """User feedback on prediction."""
     feedback_id: str = Field(..., description="Feedback ID from prediction response")
     is_correct: bool = Field(..., description="Was the prediction correct?")
-    correct_class: Optional[str] = Field(default=None, description="Correct class name if incorrect")
-    correct_class_id: Optional[int] = Field(default=None, description="Correct class ID if incorrect")
-    user_comment: Optional[str] = Field(default=None, description="Optional user comment")
-    device_info: Optional[str] = Field(default=None, description="Device information")
-    app_version: Optional[str] = Field(default=None, description="App version")
+    correct_class: str | None = Field(default=None, description="Correct class name if incorrect")
+    correct_class_id: int | None = Field(default=None, description="Correct class ID if incorrect")
+    user_comment: str | None = Field(default=None, description="Optional user comment")
+    device_info: str | None = Field(default=None, description="Device information")
+    app_version: str | None = Field(default=None, description="App version")
 
 
 class FeedbackRecorded(BaseModel):
     """Recorded feedback details."""
     is_correct: bool
     original_prediction: str
-    corrected_to: Optional[str] = None
+    corrected_to: str | None = None
 
 
 class FeedbackResponse(BaseResponse):
@@ -234,11 +234,11 @@ class FeedbackStatsResponse(BaseResponse):
     feedback_received: int
     correct_predictions: int
     incorrect_predictions: int
-    accuracy_from_feedback: Optional[float]
+    accuracy_from_feedback: float | None
     pending_feedbacks: int
-    corrections_by_class: Dict[str, int]
-    junk_reports: Optional[int] = Field(default=0, description="Number of images reported as junk/unrelated")
-    special_categories: Optional[Dict[str, int]] = Field(default=None, description="Breakdown by special category type")
+    corrections_by_class: dict[str, int]
+    junk_reports: int | None = Field(default=0, description="Number of images reported as junk/unrelated")
+    special_categories: dict[str, int] | None = Field(default=None, description="Breakdown by special category type")
 
 
 # ============================================================
@@ -250,17 +250,17 @@ class ConnectionSample(BaseModel):
     timestamp: int = Field(..., description="Unix timestamp in milliseconds")
     network_type: str = Field(..., description="Network type (wifi, 5g, 4g, 3g, 2g, etc.)")
     quality_level: int = Field(..., ge=0, le=5, description="Quality level 0-5 (offline to excellent)")
-    download_speed_kbps: Optional[int] = Field(default=None, description="Measured download speed in Kbps")
-    latitude: Optional[float] = Field(default=None, description="GPS latitude")
-    longitude: Optional[float] = Field(default=None, description="GPS longitude")
+    download_speed_kbps: int | None = Field(default=None, description="Measured download speed in Kbps")
+    latitude: float | None = Field(default=None, description="GPS latitude")
+    longitude: float | None = Field(default=None, description="GPS longitude")
 
 
 class ConnectionReportRequest(BaseModel):
     """Request to report connection quality samples."""
     device_id: str = Field(..., description="Device identifier")
-    user_id: Optional[str] = Field(default=None, description="User identifier")
+    user_id: str | None = Field(default=None, description="User identifier")
     app_version: str = Field(..., description="App version string")
-    samples: List[ConnectionSample] = Field(..., description="Connection samples to report")
+    samples: list[ConnectionSample] = Field(..., description="Connection samples to report")
 
 
 class ConnectionReportResponse(BaseResponse):
@@ -272,8 +272,8 @@ class ConnectionReportResponse(BaseResponse):
 class ConnectionStatsResponse(BaseResponse):
     """Connection quality statistics response."""
     total_samples: int = Field(..., description="Total samples collected")
-    samples_by_network_type: Dict[str, int] = Field(..., description="Sample count by network type")
-    samples_by_quality: Dict[str, int] = Field(..., description="Sample count by quality level")
-    slow_connection_locations: List[Dict[str, Any]] = Field(default_factory=list, description="Locations with slow connections")
-    average_speeds_by_type: Dict[str, float] = Field(default_factory=dict, description="Average speeds by network type")
+    samples_by_network_type: dict[str, int] = Field(..., description="Sample count by network type")
+    samples_by_quality: dict[str, int] = Field(..., description="Sample count by quality level")
+    slow_connection_locations: list[dict[str, Any]] = Field(default_factory=list, description="Locations with slow connections")
+    average_speeds_by_type: dict[str, float] = Field(default_factory=dict, description="Average speeds by network type")
 

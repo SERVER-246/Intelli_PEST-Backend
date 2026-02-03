@@ -4,18 +4,18 @@ Audit Logging
 Comprehensive audit logging for security monitoring and compliance.
 """
 
+import atexit
+import hashlib
 import json
 import logging
-import hashlib
-import time
-from datetime import datetime
-from typing import Any, Dict, Optional, List
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from enum import Enum
 import threading
+import time
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
 from queue import Queue
-import atexit
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -40,33 +40,33 @@ class AuditEvent:
     event_type: AuditEventType
     timestamp: datetime
     request_id: str
-    
+
     # Request info
-    ip_address: Optional[str] = None
-    user_agent: Optional[str] = None
-    endpoint: Optional[str] = None
-    method: Optional[str] = None
-    
+    ip_address: str | None = None
+    user_agent: str | None = None
+    endpoint: str | None = None
+    method: str | None = None
+
     # Authentication
-    api_key_hash: Optional[str] = None
-    api_key_tier: Optional[str] = None
-    
+    api_key_hash: str | None = None
+    api_key_tier: str | None = None
+
     # Details
-    status_code: Optional[int] = None
-    response_time_ms: Optional[float] = None
-    details: Dict[str, Any] = field(default_factory=dict)
-    
+    status_code: int | None = None
+    response_time_ms: float | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
     # Error info
-    error_type: Optional[str] = None
-    error_message: Optional[str] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
+    error_type: str | None = None
+    error_message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/storage."""
         data = asdict(self)
         data["event_type"] = self.event_type.value
         data["timestamp"] = self.timestamp.isoformat()
         return data
-    
+
     def to_json(self) -> str:
         """Convert to JSON string."""
         return json.dumps(self.to_dict(), default=str)
@@ -76,23 +76,23 @@ class AuditLogger:
     """
     Audit logger with async writing and sensitive data masking.
     """
-    
+
     # Fields to mask in logs
     SENSITIVE_FIELDS = {
         "api_key", "password", "token", "secret", "authorization",
         "x-api-key", "cookie", "session",
     }
-    
+
     def __init__(
         self,
-        log_dir: Optional[Path] = None,
+        log_dir: Path | None = None,
         log_to_file: bool = True,
         async_write: bool = True,
         retention_days: int = 90,
     ):
         """
         Initialize audit logger.
-        
+
         Args:
             log_dir: Directory for audit log files
             log_to_file: Whether to write to file
@@ -103,11 +103,11 @@ class AuditLogger:
         self.log_to_file = log_to_file
         self.async_write = async_write
         self.retention_days = retention_days
-        
+
         self._queue: Queue = Queue() if async_write else None
-        self._writer_thread: Optional[threading.Thread] = None
+        self._writer_thread: threading.Thread | None = None
         self._running = False
-        
+
         # Statistics
         self._stats = {
             "total_events": 0,
@@ -116,20 +116,20 @@ class AuditLogger:
             "rate_limits": 0,
             "errors": 0,
         }
-        
+
         if log_to_file and log_dir:
             log_dir.mkdir(parents=True, exist_ok=True)
-            
+
         if async_write:
             self._start_writer()
-    
+
     def _start_writer(self):
         """Start async writer thread."""
         self._running = True
         self._writer_thread = threading.Thread(target=self._write_loop, daemon=True)
         self._writer_thread.start()
         atexit.register(self._stop_writer)
-    
+
     def _stop_writer(self):
         """Stop async writer thread."""
         self._running = False
@@ -137,7 +137,7 @@ class AuditLogger:
             self._queue.put(None)  # Signal to stop
         if self._writer_thread:
             self._writer_thread.join(timeout=5)
-    
+
     def _write_loop(self):
         """Async write loop."""
         while self._running:
@@ -148,23 +148,23 @@ class AuditLogger:
                 self._write_event(event)
             except Exception:
                 continue
-    
+
     def _write_event(self, event: AuditEvent):
         """Write event to file."""
         if not self.log_to_file or not self.log_dir:
             return
-        
+
         try:
             # Daily log file
             date_str = event.timestamp.strftime("%Y-%m-%d")
             log_file = self.log_dir / f"audit_{date_str}.jsonl"
-            
+
             with open(log_file, "a") as f:
                 f.write(event.to_json() + "\n")
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
-    
-    def _mask_sensitive(self, data: Dict[str, Any]) -> Dict[str, Any]:
+
+    def _mask_sensitive(self, data: dict[str, Any]) -> dict[str, Any]:
         """Mask sensitive fields in data."""
         masked = {}
         for key, value in data.items():
@@ -178,23 +178,23 @@ class AuditLogger:
             else:
                 masked[key] = value
         return masked
-    
+
     def _update_stats(self, event: AuditEvent):
         """Update internal statistics."""
         self._stats["total_events"] += 1
-        
+
         event_type = event.event_type.value
         self._stats["events_by_type"][event_type] = (
             self._stats["events_by_type"].get(event_type, 0) + 1
         )
-        
+
         if event.event_type == AuditEventType.AUTH_FAILURE:
             self._stats["auth_failures"] += 1
         elif event.event_type == AuditEventType.RATE_LIMIT:
             self._stats["rate_limits"] += 1
         elif event.event_type == AuditEventType.ERROR:
             self._stats["errors"] += 1
-    
+
     def log(
         self,
         event_type: AuditEventType,
@@ -203,19 +203,19 @@ class AuditLogger:
     ) -> AuditEvent:
         """
         Log an audit event.
-        
+
         Args:
             event_type: Type of event
             request_id: Unique request identifier
             **kwargs: Additional event fields
-            
+
         Returns:
             The created AuditEvent
         """
         # Mask sensitive data in details
         if "details" in kwargs:
             kwargs["details"] = self._mask_sensitive(kwargs["details"])
-        
+
         # Create event
         event = AuditEvent(
             event_type=event_type,
@@ -223,10 +223,10 @@ class AuditLogger:
             request_id=request_id,
             **kwargs,
         )
-        
+
         # Update statistics
         self._update_stats(event)
-        
+
         # Log to standard logger
         log_level = logging.WARNING if event_type in [
             AuditEventType.AUTH_FAILURE,
@@ -234,26 +234,26 @@ class AuditLogger:
             AuditEventType.SECURITY_ALERT,
             AuditEventType.ERROR,
         ] else logging.INFO
-        
+
         logger.log(log_level, f"AUDIT: {event.to_json()}")
-        
+
         # Write to file
         if self.async_write and self._queue:
             self._queue.put(event)
         elif self.log_to_file:
             self._write_event(event)
-        
+
         return event
-    
+
     def log_request(
         self,
         request_id: str,
         ip_address: str,
         endpoint: str,
         method: str,
-        user_agent: Optional[str] = None,
-        api_key_hash: Optional[str] = None,
-        details: Optional[Dict] = None,
+        user_agent: str | None = None,
+        api_key_hash: str | None = None,
+        details: dict | None = None,
     ) -> AuditEvent:
         """Log an incoming request."""
         return self.log(
@@ -266,13 +266,13 @@ class AuditLogger:
             api_key_hash=api_key_hash[:16] + "..." if api_key_hash else None,
             details=details or {},
         )
-    
+
     def log_response(
         self,
         request_id: str,
         status_code: int,
         response_time_ms: float,
-        details: Optional[Dict] = None,
+        details: dict | None = None,
     ) -> AuditEvent:
         """Log a response."""
         return self.log(
@@ -282,13 +282,13 @@ class AuditLogger:
             response_time_ms=response_time_ms,
             details=details or {},
         )
-    
+
     def log_auth_failure(
         self,
         request_id: str,
         ip_address: str,
         reason: str,
-        details: Optional[Dict] = None,
+        details: dict | None = None,
     ) -> AuditEvent:
         """Log authentication failure."""
         return self.log(
@@ -297,12 +297,12 @@ class AuditLogger:
             ip_address=ip_address,
             details={"reason": reason, **(details or {})},
         )
-    
+
     def log_rate_limit(
         self,
         request_id: str,
         ip_address: str,
-        api_key_hash: Optional[str] = None,
+        api_key_hash: str | None = None,
         retry_after: int = 0,
     ) -> AuditEvent:
         """Log rate limit event."""
@@ -313,13 +313,13 @@ class AuditLogger:
             api_key_hash=api_key_hash[:16] + "..." if api_key_hash else None,
             details={"retry_after": retry_after},
         )
-    
+
     def log_security_alert(
         self,
         request_id: str,
         alert_type: str,
         ip_address: str,
-        details: Dict,
+        details: dict,
     ) -> AuditEvent:
         """Log security alert."""
         logger.warning(f"SECURITY ALERT: {alert_type} from {ip_address}")
@@ -329,17 +329,17 @@ class AuditLogger:
             ip_address=ip_address,
             details={"alert_type": alert_type, **details},
         )
-    
-    def get_stats(self) -> Dict[str, Any]:
+
+    def get_stats(self) -> dict[str, Any]:
         """Get audit statistics."""
         return self._stats.copy()
 
 
 # Global audit logger instance
-_audit_logger: Optional[AuditLogger] = None
+_audit_logger: AuditLogger | None = None
 
 
-def get_audit_logger(log_dir: Optional[Path] = None) -> AuditLogger:
+def get_audit_logger(log_dir: Path | None = None) -> AuditLogger:
     """Get or create the global audit logger."""
     global _audit_logger
     if _audit_logger is None:

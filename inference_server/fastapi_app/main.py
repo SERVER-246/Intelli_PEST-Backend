@@ -6,62 +6,62 @@ Create and configure the FastAPI inference server.
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
-from .routers import router, admin_router
 from .app_management import app_router
 from .dependencies import (
-    set_inference_engine,
-    set_validation_pipeline,
     set_api_key_manager,
+    set_inference_engine,
     set_settings,
+    set_validation_pipeline,
 )
+from .routers import admin_router, router
 
 logger = logging.getLogger(__name__)
 
 
 def create_app(
-    config: Optional[dict] = None,
-    model_path: Optional[str] = None,
-    model_format: Optional[str] = None,
+    config: dict | None = None,
+    model_path: str | None = None,
+    model_format: str | None = None,
 ) -> FastAPI:
     """
     Create and configure the FastAPI application.
-    
+
     Args:
         config: Optional configuration dictionary
         model_path: Path to the model file
         model_format: Model format (pytorch, onnx, tflite)
-        
+
     Returns:
         Configured FastAPI application
     """
     config = config or {}
-    
+
     # Initialize components before app starts
     api_key_manager = None
     validation_pipeline = None
     inference_engine = None
-    
+
     # Try to load security components
     try:
         from ..security import APIKeyManager, SecurityHeaders
         from .dependencies import _api_key_manager
-        
+
         # Use existing manager if already set, otherwise create new one
         if _api_key_manager is not None:
             api_key_manager = _api_key_manager
             logger.info("Using pre-configured API key manager")
         else:
             api_key_manager = APIKeyManager()
-            
+
             # Generate default key if none exist
             if api_key_manager.get_stats().get("total_keys", 0) == 0:
                 from ..security.api_keys import APIKeyTier
@@ -71,19 +71,19 @@ def create_app(
                     description="Default admin key",
                 )
                 logger.info(f"Generated default API key: {default_key['key']}")
-            
+
             set_api_key_manager(api_key_manager)
-        
+
     except Exception as e:
         logger.warning(f"Security components not available: {e}")
-    
+
     # Try to load validation pipeline
     try:
         from ..filters import ValidationPipeline
+        from ..filters.content_filter import ContentFilter
         from ..filters.file_validator import FileValidator
         from ..filters.image_validator import ImageValidator
-        from ..filters.content_filter import ContentFilter
-        
+
         # Create more permissive validators for agricultural images
         # - Allow larger files (DSC camera images can be 15MB+)
         # - Allow higher resolution (up to 8192px for high-res cameras)
@@ -92,18 +92,18 @@ def create_app(
             min_size=1024,                    # 1 KB minimum
             max_size=20 * 1024 * 1024,        # 20 MB maximum (was 10MB)
         )
-        
+
         image_validator = ImageValidator(
             min_dimension=64,
             max_dimension=8192,               # Allow up to 8K images (was 4096)
             min_aspect_ratio=0.1,             # More permissive aspect ratio
             max_aspect_ratio=10.0,
         )
-        
+
         # Configure content filter - simplified version that only blocks obvious non-plant images
         # (faces, solid colors). Users can report irrelevant images via "junk" feedback.
         content_filter = ContentFilter(enabled=True)
-        
+
         validation_pipeline = ValidationPipeline(
             file_validator=file_validator,
             image_validator=image_validator,
@@ -112,16 +112,17 @@ def create_app(
         )
         set_validation_pipeline(validation_pipeline)
         logger.info("Image validation pipeline loaded (with human detection filter enabled)")
-        
+
     except Exception as e:
         logger.warning(f"Validation pipeline not available: {e}")
-    
+
     # Try to load inference engine
     if model_path:
         try:
-            from ..engine.pytorch_inference import PyTorchInference
             from pathlib import Path
-            
+
+            from ..engine.pytorch_inference import PyTorchInference
+
             # Load PyTorch model directly (handles state dict reconstruction)
             inference_engine = PyTorchInference(
                 model_path=Path(model_path),
@@ -129,21 +130,21 @@ def create_app(
             )
             set_inference_engine(inference_engine)
             logger.info(f"Inference engine loaded: {model_path}")
-            
+
             # Initialize Phase 3 separately for router-level integration
             try:
                 import sys
                 # Add black_ops_training to path for Phase 3 imports
                 black_ops_dir = Path(__file__).parent.parent.parent / "black_ops_training"
                 logger.info(f"Looking for Phase 3 at: {black_ops_dir}")
-                
+
                 if black_ops_dir.exists():
                     if str(black_ops_dir) not in sys.path:
                         sys.path.insert(0, str(black_ops_dir))
-                    
-                    from phase3_enabled_config import enable_phase3, Phase3ProductionMode
+
+                    from phase3_enabled_config import Phase3ProductionMode, enable_phase3
                     phase3_manager = enable_phase3(Phase3ProductionMode.INFERENCE)
-                    
+
                     # Store Phase 3 manager in app state for router access
                     from . import dependencies
                     dependencies._phase3_manager = phase3_manager
@@ -154,14 +155,14 @@ def create_app(
                 import traceback
                 logger.warning(f"Phase 3 initialization failed (continuing without): {p3_err}")
                 traceback.print_exc()
-                
+
         except Exception as e:
             logger.error(f"Failed to load inference engine: {e}")
             import traceback
             traceback.print_exc()
     else:
         logger.warning("No model path provided, inference not available")
-    
+
     # Create FastAPI app
     app = FastAPI(
         title="Sugarcane Pest Detection API",
@@ -171,11 +172,11 @@ def create_app(
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
-    
+
     # Store start time
     app.state.start_time = time.time()
     app.state.config = config
-    
+
     # Initialize analytics for correction tracking
     try:
         from src.analytics.integration import init_analytics
@@ -186,7 +187,7 @@ def create_app(
         logger.debug("Analytics module not available, skipping initialization")
     except Exception as e:
         logger.warning(f"Failed to initialize analytics: {e}")
-    
+
     # Add CORS middleware
     cors_origins = config.get("cors_origins", ["*"])
     app.add_middleware(
@@ -196,13 +197,13 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # GZIP compression disabled - causes MalformedJsonException on Android/OkHttp
     # when used with Dev Tunnels. OkHttp adds Accept-Encoding: gzip automatically
     # but something in the response chain corrupts the Content-Encoding header.
     # TODO: Re-enable once we can test with proper production server setup.
     # app.add_middleware(GZipMiddleware, minimum_size=500)
-    
+
     # Add timing middleware
     @app.middleware("http")
     async def add_timing_header(request: Request, call_next):
@@ -211,7 +212,7 @@ def create_app(
         elapsed = (time.time() - start_time) * 1000
         response.headers["X-Response-Time"] = f"{elapsed:.2f}ms"
         return response
-    
+
     # Add security headers middleware
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
@@ -221,7 +222,7 @@ def create_app(
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
-    
+
     # Global exception handler
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
@@ -236,12 +237,12 @@ def create_app(
                 },
             },
         )
-    
+
     # Include routers
     app.include_router(router)
     app.include_router(admin_router)
     app.include_router(app_router)
-    
+
     # Root endpoint
     @app.get("/")
     async def root():
@@ -251,9 +252,9 @@ def create_app(
             "status": "running",
             "documentation": "/docs",
         }
-    
+
     logger.info("FastAPI application created successfully")
-    
+
     return app
 
 
@@ -261,12 +262,12 @@ def run_app(
     host: str = "0.0.0.0",
     port: int = 8000,
     reload: bool = False,
-    model_path: Optional[str] = None,
-    model_format: Optional[str] = None,
+    model_path: str | None = None,
+    model_format: str | None = None,
 ):
     """
     Run the FastAPI application.
-    
+
     Args:
         host: Host to bind to
         port: Port to bind to
@@ -275,12 +276,12 @@ def run_app(
         model_format: Model format
     """
     import uvicorn
-    
+
     # Create app with model
     app = create_app(model_path=model_path, model_format=model_format)
-    
+
     logger.info(f"Starting FastAPI server on {host}:{port}")
-    
+
     uvicorn.run(
         app,
         host=host,
@@ -304,7 +305,7 @@ def get_app():
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Run FastAPI Inference Server")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
@@ -312,9 +313,9 @@ if __name__ == "__main__":
     parser.add_argument("--model", required=True, help="Path to model file")
     parser.add_argument("--format", choices=["pytorch", "onnx", "tflite"],
                         help="Model format (auto-detected if not specified)")
-    
+
     args = parser.parse_args()
-    
+
     run_app(
         host=args.host,
         port=args.port,

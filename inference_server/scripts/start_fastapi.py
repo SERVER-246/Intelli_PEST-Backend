@@ -34,7 +34,7 @@ Examples:
   python start_fastapi.py --model models/model.tflite --port 8080 --workers 4
         """,
     )
-    
+
     parser.add_argument(
         "--model",
         type=str,
@@ -79,45 +79,46 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level (default: INFO)",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     setup_logging(args.log_level)
     logger = logging.getLogger(__name__)
-    
+
     # Validate model path
     if not args.model:
         logger.error("Model path is required. Use --model or set MODEL_PATH environment variable.")
         sys.exit(1)
-    
+
     model_path = Path(args.model)
     if not model_path.exists():
         logger.error(f"Model file not found: {model_path}")
         sys.exit(1)
-    
-    logger.info(f"Starting FastAPI server...")
+
+    logger.info("Starting FastAPI server...")
     logger.info(f"Model: {model_path}")
     logger.info(f"Format: {args.format or 'auto-detect'}")
     logger.info(f"Host: {args.host}")
     logger.info(f"Port: {args.port}")
     logger.info(f"Workers: {args.workers}")
-    
+
     try:
         import uvicorn
+
         from inference_server.fastapi_app import create_app
-        
+
         # Create app with model configuration
         # Note: For production with workers > 1, use environment variables
         os.environ["MODEL_PATH"] = str(model_path)
         if args.format:
             os.environ["MODEL_FORMAT"] = args.format
-        
+
         app = create_app(
             model_path=str(model_path),
             model_format=args.format,
         )
-        
+
         uvicorn.run(
             app,
             host=args.host,
@@ -126,7 +127,7 @@ Examples:
             reload=args.reload,
             log_level=args.log_level.lower(),
         )
-        
+
     except ImportError as e:
         logger.error(f"Import error: {e}")
         logger.error("Make sure all dependencies are installed: pip install -r requirements.txt")

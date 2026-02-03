@@ -46,12 +46,17 @@ select = [
 ignore = [
     "E501",  # line too long (we set line-length above)
     "E402",  # module level import not at top (common in ML code)
+    "E701",  # multiple statements on one line (colon)
+    "E702",  # multiple statements on one line (semicolon)
+    "E722",  # bare except (legacy code, too many to fix)
     "E741",  # ambiguous variable name (l, I, O)
     "B008",  # function call in default argument
+    "B904",  # raise without from inside except (legacy code)
     "B905",  # zip without explicit strict
     "B007",  # unused loop variable
     "F401",  # imported but unused (handled separately)
     "F841",  # local variable assigned but never used
+    "UP035", # deprecated typing imports (Dict, List, etc.) - need Python 3.9 compat
 ]
 
 [tool.ruff.lint.per-file-ignores]

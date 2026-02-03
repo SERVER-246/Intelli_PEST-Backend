@@ -10,10 +10,10 @@ import logging
 import os
 import shutil
 import threading
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,55 +24,55 @@ class ImageMetadata:
     # Identifiers
     image_hash: str
     image_path: str
-    
+
     # Prediction info
     predicted_class: str
     predicted_class_id: int
     confidence: float
-    all_probabilities: Optional[Dict[str, float]] = None
-    
+    all_probabilities: dict[str, float] | None = None
+
     # User feedback
     feedback_status: str = "unverified"  # unverified, correct, corrected
-    corrected_class: Optional[str] = None
-    corrected_class_id: Optional[int] = None
-    
+    corrected_class: str | None = None
+    corrected_class_id: int | None = None
+
     # User info
-    user_id: Optional[str] = None
-    email: Optional[str] = None
-    device_id: Optional[str] = None
-    
+    user_id: str | None = None
+    email: str | None = None
+    device_id: str | None = None
+
     # Location
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    
+    latitude: float | None = None
+    longitude: float | None = None
+
     # Timestamps
     submission_timestamp: str = ""
-    feedback_timestamp: Optional[str] = None
-    
+    feedback_timestamp: str | None = None
+
     # Trust info
-    user_trust_score: Optional[float] = None
+    user_trust_score: float | None = None
     is_trusted_submission: bool = True
-    
+
     # Request info
-    request_id: Optional[str] = None
-    app_version: Optional[str] = None
-    
+    request_id: str | None = None
+    app_version: str | None = None
+
     # Image info
-    original_filename: Optional[str] = None
-    file_size_bytes: Optional[int] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
+    original_filename: str | None = None
+    file_size_bytes: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ImageMetadata":
+    def from_dict(cls, data: dict[str, Any]) -> "ImageMetadata":
         return cls(**data)
 
 
 class DataCollector:
     """
     Silently collects images and metadata for data enrichment.
-    
+
     Folder structure:
     - images/correct/{class_name}/       - Confirmed correct predictions
     - images/corrected/{class_name}/     - User-corrected images (by correct class)
@@ -80,95 +80,95 @@ class DataCollector:
     - images/flagged/{user_id}/          - From flagged users
     - metadata/{image_hash}.json         - Full metadata per image
     """
-    
+
     def __init__(
         self,
         base_dir: str = "./feedback_data",
-        class_names: Optional[List[str]] = None,
+        class_names: list[str] | None = None,
     ):
         self.base_dir = Path(base_dir)
         self.images_dir = self.base_dir / "images"
         self.metadata_dir = self.base_dir / "metadata"
         self.class_names = class_names or []
-        
+
         self._lock = threading.Lock()
-        self._metadata_cache: Dict[str, ImageMetadata] = {}
-        
+        self._metadata_cache: dict[str, ImageMetadata] = {}
+
         # Create directory structure
         self._setup_directories()
-        
+
         # Load existing metadata
         self._load_metadata()
-        
+
         logger.info(f"DataCollector initialized. Base dir: {self.base_dir}")
-    
+
     def _setup_directories(self):
         """Create the directory structure."""
         # Main directories
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Subdirectories for image categories
         (self.images_dir / "correct").mkdir(exist_ok=True)
         (self.images_dir / "corrected").mkdir(exist_ok=True)
         (self.images_dir / "unverified").mkdir(exist_ok=True)
         (self.images_dir / "flagged").mkdir(exist_ok=True)
-        
+
         # Create class subdirectories
         for class_name in self.class_names:
             (self.images_dir / "correct" / class_name).mkdir(exist_ok=True)
             (self.images_dir / "corrected" / class_name).mkdir(exist_ok=True)
-    
-    def set_class_names(self, class_names: List[str]):
+
+    def set_class_names(self, class_names: list[str]):
         """Update class names and create directories."""
         self.class_names = class_names
         for class_name in class_names:
             (self.images_dir / "correct" / class_name).mkdir(exist_ok=True)
             (self.images_dir / "corrected" / class_name).mkdir(exist_ok=True)
-    
+
     def collect_image(
         self,
         image_bytes: bytes,
         predicted_class: str,
         predicted_class_id: int,
         confidence: float,
-        user_id: Optional[str] = None,
-        email: Optional[str] = None,
-        device_id: Optional[str] = None,
-        latitude: Optional[float] = None,
-        longitude: Optional[float] = None,
-        request_id: Optional[str] = None,
-        app_version: Optional[str] = None,
-        original_filename: Optional[str] = None,
-        all_probabilities: Optional[Dict[str, float]] = None,
-        user_trust_score: Optional[float] = None,
+        user_id: str | None = None,
+        email: str | None = None,
+        device_id: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        request_id: str | None = None,
+        app_version: str | None = None,
+        original_filename: str | None = None,
+        all_probabilities: dict[str, float] | None = None,
+        user_trust_score: float | None = None,
         is_flagged_user: bool = False,
     ) -> str:
         """
         Collect an image and its metadata silently.
-        
+
         Returns:
             image_hash for later reference
         """
         # Calculate hash
         image_hash = hashlib.md5(image_bytes).hexdigest()
-        
+
         # Determine save location
         # NOTE: Flagged folder no longer used - all users are trusted experts
         # Images always go to unverified until feedback is received
         date_str = datetime.utcnow().strftime("%Y-%m-%d")
         save_dir = self.images_dir / "unverified" / date_str
-        
+
         save_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Save image
         timestamp = datetime.utcnow().strftime("%H%M%S")
         filename = f"{image_hash}_{timestamp}.jpg"
         image_path = save_dir / filename
-        
+
         with open(image_path, "wb") as f:
             f.write(image_bytes)
-        
+
         # Create metadata
         metadata = ImageMetadata(
             image_hash=image_hash,
@@ -191,52 +191,52 @@ class DataCollector:
             original_filename=original_filename,
             file_size_bytes=len(image_bytes),
         )
-        
+
         # Save metadata
         with self._lock:
             self._metadata_cache[image_hash] = metadata
             self._save_metadata(metadata)
-        
+
         # Also save to database for persistent storage
         self._save_to_database(metadata)
-        
+
         logger.info(f"Collected image: {image_hash} -> {save_dir}/{filename}, metadata cached: {image_hash in self._metadata_cache}")
         return image_hash
-    
+
     def update_with_feedback(
         self,
         image_hash: str,
         is_correct: bool,
-        corrected_class: Optional[str] = None,
-        corrected_class_id: Optional[int] = None,
+        corrected_class: str | None = None,
+        corrected_class_id: int | None = None,
         is_trusted: bool = True,
     ) -> bool:
         """
         Update image metadata and move to appropriate folder based on feedback.
-        
+
         Returns:
             True if successful
         """
         logger.info(f"update_with_feedback called: hash={image_hash}, is_correct={is_correct}, corrected_class={corrected_class}")
         logger.info(f"  Cache has {len(self._metadata_cache)} entries, looking for hash...")
-        
+
         with self._lock:
             if image_hash not in self._metadata_cache:
                 logger.warning(f"Image hash not found in cache: {image_hash}")
                 logger.warning(f"  Available hashes: {list(self._metadata_cache.keys())[:5]}...")
                 return False
-            
+
             metadata = self._metadata_cache[image_hash]
             old_path = Path(metadata.image_path)
-            
+
             if not old_path.exists():
                 logger.warning(f"Image file not found: {old_path}")
                 return False
-            
+
             # Update metadata
             metadata.feedback_timestamp = datetime.utcnow().isoformat() + "Z"
             metadata.is_trusted_submission = True  # All users are trusted experts
-            
+
             if is_correct:
                 metadata.feedback_status = "correct"
                 # Move to correct/{predicted_class}/
@@ -247,50 +247,50 @@ class DataCollector:
                 metadata.corrected_class_id = corrected_class_id
                 # Move to corrected/{correct_class}/
                 new_dir = self.images_dir / "corrected" / (corrected_class or "unknown")
-            
+
             # NOTE: Flagged folder no longer used - all users are trusted experts
             # (keeping the parameter for API compatibility but ignoring it)
-            
+
             new_dir.mkdir(parents=True, exist_ok=True)
             new_path = new_dir / old_path.name
-            
+
             # Move file
             try:
                 shutil.move(str(old_path), str(new_path))
                 metadata.image_path = str(new_path)
             except Exception as e:
                 logger.error(f"Failed to move image: {e}")
-            
+
             # Save updated metadata
             self._save_metadata(metadata)
-            
+
         return True
-    
-    def get_metadata(self, image_hash: str) -> Optional[Dict[str, Any]]:
+
+    def get_metadata(self, image_hash: str) -> dict[str, Any] | None:
         """Get metadata for an image."""
         with self._lock:
             if image_hash in self._metadata_cache:
                 return self._metadata_cache[image_hash].to_dict()
         return None
-    
+
     def get_training_data(
         self,
         include_correct: bool = True,
         include_corrected: bool = True,
         only_trusted: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get images suitable for retraining.
-        
+
         Returns list of {image_path, class_name, confidence, is_corrected}
         """
         results = []
-        
+
         with self._lock:
             for metadata in self._metadata_cache.values():
                 if only_trusted and not metadata.is_trusted_submission:
                     continue
-                
+
                 if metadata.feedback_status == "correct" and include_correct:
                     results.append({
                         "image_path": metadata.image_path,
@@ -310,10 +310,10 @@ class DataCollector:
                         "user_verified": True,
                         "original_prediction": metadata.predicted_class,
                     })
-        
+
         return results
-    
-    def get_statistics(self) -> Dict[str, Any]:
+
+    def get_statistics(self) -> dict[str, Any]:
         """Get collection statistics."""
         with self._lock:
             stats = {
@@ -325,15 +325,15 @@ class DataCollector:
                 "untrusted": 0,
                 "by_class": {},
             }
-            
+
             for metadata in self._metadata_cache.values():
                 stats[metadata.feedback_status] = stats.get(metadata.feedback_status, 0) + 1
-                
+
                 if metadata.is_trusted_submission:
                     stats["trusted"] += 1
                 else:
                     stats["untrusted"] += 1
-                
+
                 # Count by class
                 class_name = metadata.corrected_class or metadata.predicted_class
                 if class_name not in stats["by_class"]:
@@ -343,9 +343,9 @@ class DataCollector:
                     stats["by_class"][class_name]["correct"] += 1
                 elif metadata.feedback_status == "corrected":
                     stats["by_class"][class_name]["corrected"] += 1
-            
+
             return stats
-    
+
     def _save_to_database(self, metadata: ImageMetadata):
         """Save metadata to SQLite database for persistent storage."""
         try:
@@ -356,13 +356,13 @@ class DataCollector:
                 logger.debug(f"Saved metadata to database: {metadata.image_hash}")
         except Exception as e:
             logger.error(f"Failed to save metadata to database: {e}")
-    
+
     def _save_metadata(self, metadata: ImageMetadata):
         """Save metadata to JSON file."""
         try:
             # Ensure metadata directory exists
             self.metadata_dir.mkdir(parents=True, exist_ok=True)
-            
+
             filepath = self.metadata_dir / f"{metadata.image_hash}.json"
             with open(filepath, "w") as f:
                 json.dump(metadata.to_dict(), f, indent=2)
@@ -371,25 +371,25 @@ class DataCollector:
             logger.error(f"Failed to save metadata for {metadata.image_hash}: {e}")
             import traceback
             traceback.print_exc()
-    
+
     def _load_metadata(self):
         """Load all metadata from files."""
         try:
             for filepath in self.metadata_dir.glob("*.json"):
-                with open(filepath, "r") as f:
+                with open(filepath) as f:
                     data = json.load(f)
                     metadata = ImageMetadata.from_dict(data)
                     self._metadata_cache[metadata.image_hash] = metadata
             logger.info(f"Loaded {len(self._metadata_cache)} image metadata records")
         except Exception as e:
             logger.error(f"Error loading metadata: {e}")
-    
-    def export_to_csv(self, filepath: Optional[str] = None) -> str:
+
+    def export_to_csv(self, filepath: str | None = None) -> str:
         """Export metadata to CSV for analysis."""
         import csv
-        
+
         filepath = filepath or str(self.base_dir / "image_metadata.csv")
-        
+
         with self._lock:
             with open(filepath, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -399,7 +399,7 @@ class DataCollector:
                     "Submission Time", "Feedback Time", "Trust Score", "Trusted",
                     "Image Path"
                 ])
-                
+
                 for m in self._metadata_cache.values():
                     writer.writerow([
                         m.image_hash,
@@ -417,23 +417,23 @@ class DataCollector:
                         "Yes" if m.is_trusted_submission else "No",
                         m.image_path,
                     ])
-        
+
         logger.info(f"Exported metadata to {filepath}")
         return filepath
 
 
 # Global instance
-_data_collector: Optional[DataCollector] = None
+_data_collector: DataCollector | None = None
 
 
-def get_data_collector() -> Optional[DataCollector]:
+def get_data_collector() -> DataCollector | None:
     """Get global data collector instance."""
     return _data_collector
 
 
 def init_data_collector(
     base_dir: str = "./feedback_data",
-    class_names: Optional[List[str]] = None,
+    class_names: list[str] | None = None,
 ) -> DataCollector:
     """Initialize global data collector."""
     global _data_collector

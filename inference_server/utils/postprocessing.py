@@ -5,9 +5,9 @@ Format inference results for API responses.
 """
 
 import logging
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -18,26 +18,26 @@ def generate_request_id() -> str:
 
 
 def format_prediction(
-    prediction_result: Dict[str, Any],
-    request_id: Optional[str] = None,
-    validation_result: Optional[Dict[str, Any]] = None,
+    prediction_result: dict[str, Any],
+    request_id: str | None = None,
+    validation_result: dict[str, Any] | None = None,
     include_all_probabilities: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Format a single prediction result for API response.
-    
+
     Args:
         prediction_result: Raw prediction from inference engine
         request_id: Request identifier
         validation_result: Image validation result
         include_all_probabilities: Include all class probabilities
-        
+
     Returns:
         Formatted API response dictionary
     """
     request_id = request_id or generate_request_id()
     timestamp = datetime.utcnow().isoformat() + "Z"
-    
+
     # Handle error case
     if not prediction_result.get("success", True):
         return {
@@ -49,7 +49,7 @@ def format_prediction(
                 "message": prediction_result.get("error", "Unknown error during inference"),
             },
         }
-    
+
     # Build successful response
     response = {
         "status": "success",
@@ -61,7 +61,7 @@ def format_prediction(
             "confidence": round(prediction_result.get("confidence", 0.0), 4),
         },
     }
-    
+
     # Add all probabilities if requested
     if include_all_probabilities and "probabilities" in prediction_result:
         probs = prediction_result["probabilities"]
@@ -73,14 +73,14 @@ def format_prediction(
             response["prediction"]["all_probabilities"] = [
                 round(float(p), 4) for p in probs
             ]
-    
+
     # Add inference metadata
     response["inference"] = {
         "model_format": prediction_result.get("model_format", "unknown"),
         "device": prediction_result.get("device", "unknown"),
         "time_ms": round(prediction_result.get("inference_time_ms", 0.0), 2),
     }
-    
+
     # Add validation info if provided
     if validation_result:
         response["validation"] = {
@@ -88,38 +88,38 @@ def format_prediction(
             "relevance_score": round(validation_result.get("relevance_score", 1.0), 2),
             "quality_score": round(validation_result.get("quality_score", 1.0), 2),
         }
-    
+
     return response
 
 
 def format_batch_predictions(
-    predictions: List[Dict[str, Any]],
-    request_id: Optional[str] = None,
-    validation_results: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    predictions: list[dict[str, Any]],
+    request_id: str | None = None,
+    validation_results: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """
     Format batch prediction results for API response.
-    
+
     Args:
         predictions: List of prediction results
         request_id: Request identifier
         validation_results: List of validation results
-        
+
     Returns:
         Formatted API response dictionary
     """
     request_id = request_id or generate_request_id()
     timestamp = datetime.utcnow().isoformat() + "Z"
-    
+
     # Process each prediction
     results = []
     successful = 0
     failed = 0
     total_time = 0.0
-    
+
     for i, pred in enumerate(predictions):
         validation = validation_results[i] if validation_results and i < len(validation_results) else None
-        
+
         if pred.get("success", True):
             successful += 1
             results.append({
@@ -140,7 +140,7 @@ def format_batch_predictions(
                 "status": "error",
                 "error": pred.get("error", "Unknown error"),
             })
-    
+
     response = {
         "status": "success" if failed == 0 else "partial" if successful > 0 else "error",
         "request_id": request_id,
@@ -154,33 +154,33 @@ def format_batch_predictions(
         },
         "results": results,
     }
-    
+
     return response
 
 
 def format_error_response(
     error_code: str,
     error_message: str,
-    request_id: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None,
-    suggestion: Optional[str] = None,
-) -> Dict[str, Any]:
+    request_id: str | None = None,
+    details: dict[str, Any] | None = None,
+    suggestion: str | None = None,
+) -> dict[str, Any]:
     """
     Format an error response.
-    
+
     Args:
         error_code: Error code string
         error_message: Human-readable error message
         request_id: Request identifier
         details: Additional error details
         suggestion: Suggestion for fixing the error
-        
+
     Returns:
         Formatted error response
     """
     request_id = request_id or generate_request_id()
     timestamp = datetime.utcnow().isoformat() + "Z"
-    
+
     response = {
         "status": "error",
         "request_id": request_id,
@@ -190,39 +190,39 @@ def format_error_response(
             "message": error_message,
         },
     }
-    
+
     if details:
         response["error"]["details"] = details
-    
+
     if suggestion:
         response["suggestion"] = suggestion
-    
+
     return response
 
 
 def format_rejected_response(
     reason: str,
-    request_id: Optional[str] = None,
+    request_id: str | None = None,
     relevance_score: float = 0.0,
-    detected_category: Optional[str] = None,
-    suggestion: Optional[str] = None,
-) -> Dict[str, Any]:
+    detected_category: str | None = None,
+    suggestion: str | None = None,
+) -> dict[str, Any]:
     """
     Format a rejection response for invalid/irrelevant images.
-    
+
     Args:
         reason: Rejection reason
         request_id: Request identifier
         relevance_score: Content relevance score
         detected_category: Detected image category
         suggestion: Suggestion for user
-        
+
     Returns:
         Formatted rejection response
     """
     request_id = request_id or generate_request_id()
     timestamp = datetime.utcnow().isoformat() + "Z"
-    
+
     return {
         "status": "rejected",
         "request_id": request_id,
@@ -243,18 +243,18 @@ def format_rejected_response(
 def format_health_response(
     healthy: bool = True,
     model_loaded: bool = False,
-    model_info: Optional[Dict[str, Any]] = None,
+    model_info: dict[str, Any] | None = None,
     version: str = "1.0.0",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Format health check response.
-    
+
     Args:
         healthy: Whether service is healthy
         model_loaded: Whether model is loaded
         model_info: Model information
         version: API version
-        
+
     Returns:
         Health check response
     """

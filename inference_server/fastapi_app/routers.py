@@ -11,61 +11,65 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 
+from ..feedback import FeedbackManager
+from ..feedback.data_collector import get_data_collector
+from ..feedback.feedback_manager import get_feedback_manager
+from ..feedback.user_tracker import get_user_tracker
+from .connection_tracker import get_connection_tracker
 from .dependencies import (
+    RequestContext,
+    check_rate_limit,
+    get_api_key_manager,
     get_inference_engine,
     get_optional_inference_engine,
-    get_validation_pipeline,
-    get_api_key_manager,
     get_phase3_manager,
-    verify_api_key,
-    check_rate_limit,
-    require_admin,
     get_request_context,
-    RequestContext,
+    get_validation_pipeline,
+    require_admin,
+    verify_api_key,
 )
 from .schemas import (
-    HealthResponse,
-    PredictionResponse,
-    BatchPredictionResponse,
-    ClassesResponse,
-    ModelsResponse,
-    ErrorResponse,
-    RejectionResponse,
     Base64ImageRequest,
-    PredictionResult,
-    InferenceInfo,
+    BatchPredictionResponse,
     BatchResultItem,
     BatchSummary,
+    ClassesResponse,
     ClassInfo,
-    ModelInfo,
+    ConnectionReportRequest,
+    ConnectionReportResponse,
+    # Connection tracking schemas
+    ConnectionSample,
+    ConnectionStatsResponse,
+    ErrorResponse,
     ExposedModelInfo,
+    FeedbackRecorded,
     FeedbackRequest,
     FeedbackResponse,
     FeedbackStatsResponse,
-    FeedbackRecorded,
+    HealthResponse,
+    InferenceInfo,
+    ModelInfo,
+    ModelsResponse,
+    Phase3AttentionInfo,
+    Phase3MultiLabelPrediction,
+    Phase3RegionInfo,
     # Phase 3 schemas
     Phase3Response,
-    Phase3AttentionInfo,
-    Phase3RegionInfo,
-    Phase3MultiLabelPrediction,
-    # Connection tracking schemas
-    ConnectionSample,
-    ConnectionReportRequest,
-    ConnectionReportResponse,
-    ConnectionStatsResponse,
+    PredictionResponse,
+    PredictionResult,
+    RejectionResponse,
 )
-from ..feedback import FeedbackManager
-from ..feedback.feedback_manager import get_feedback_manager
-from ..feedback.user_tracker import get_user_tracker
-from ..feedback.data_collector import get_data_collector
-from .connection_tracker import get_connection_tracker
 
 # Analytics integration for correction tracking
 try:
     from src.analytics.integration import (
         init_analytics,
-        log_prediction as analytics_log_prediction,
+    )
+    from src.analytics.integration import (
         log_correction as analytics_log_correction,
+    )
+    from src.analytics.integration import (
+        log_prediction as analytics_log_prediction,
     )
     ANALYTICS_AVAILABLE = True
 except ImportError:
@@ -86,12 +90,12 @@ async def health_check(
 ):
     """
     Health check endpoint.
-    
+
     Returns service health status and model information.
     """
     model_loaded = engine is not None
     model_info = None
-    
+
     if engine:
         try:
             model_info = {
@@ -101,7 +105,7 @@ async def health_check(
             }
         except Exception:
             pass
-    
+
     return HealthResponse(
         status="healthy" if model_loaded else "degraded",
         timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -114,15 +118,15 @@ async def health_check(
 async def list_models():
     """
     List available models.
-    
+
     Returns publicly exposed models only.
     """
     try:
         from ..engine.model_registry import get_model_registry
-        
+
         registry = get_model_registry()
         exposed_models = registry.list_exposed()
-        
+
         # Convert RegisteredModel to ExposedModelInfo
         models_info = [
             ExposedModelInfo(
@@ -133,7 +137,7 @@ async def list_models():
             )
             for m in exposed_models
         ]
-        
+
         return ModelsResponse(
             status="success",
             models=models_info,
@@ -152,7 +156,7 @@ async def list_classes(
 ):
     """
     List pest classes.
-    
+
     Returns all pest classes the model can detect.
     """
     default_classes = [
@@ -168,9 +172,9 @@ async def list_classes(
         "termite",
         "Top borer",
     ]
-    
+
     classes = engine.class_names if engine else default_classes
-    
+
     return ClassesResponse(
         status="success",
         num_classes=len(classes),
@@ -186,13 +190,13 @@ async def predict(
     image: UploadFile = File(..., description="Image file to classify"),
     include_probabilities: bool = Query(False, description="Include all class probabilities"),
     lite: bool = Query(False, description="Lite mode for slow connections (2G/3G) - minimal response"),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id", description="User ID"),
-    x_user_email: Optional[str] = Header(None, alias="X-User-Email", description="User email"),
-    x_device_id: Optional[str] = Header(None, alias="X-Device-Id", description="Device ID"),
-    x_latitude: Optional[str] = Header(None, alias="X-Latitude", description="GPS latitude"),
-    x_longitude: Optional[str] = Header(None, alias="X-Longitude", description="GPS longitude"),
-    x_app_version: Optional[str] = Header(None, alias="X-App-Version", description="App version"),
-    x_connection_info: Optional[str] = Header(None, alias="X-Connection-Info", description="Connection quality info (type:value;quality:level)"),
+    x_user_id: str | None = Header(None, alias="X-User-Id", description="User ID"),
+    x_user_email: str | None = Header(None, alias="X-User-Email", description="User email"),
+    x_device_id: str | None = Header(None, alias="X-Device-Id", description="Device ID"),
+    x_latitude: str | None = Header(None, alias="X-Latitude", description="GPS latitude"),
+    x_longitude: str | None = Header(None, alias="X-Longitude", description="GPS longitude"),
+    x_app_version: str | None = Header(None, alias="X-App-Version", description="App version"),
+    x_connection_info: str | None = Header(None, alias="X-Connection-Info", description="Connection quality info (type:value;quality:level)"),
     api_key: dict = Depends(check_rate_limit),
     engine=Depends(get_inference_engine),
     pipeline=Depends(get_validation_pipeline),
@@ -200,7 +204,7 @@ async def predict(
 ):
     """
     Single image prediction with user tracking.
-    
+
     Upload an image to get pest classification.
     Include user info via headers (X-User-Id, X-User-Email, X-Device-Id, X-Latitude, X-Longitude, X-App-Version).
     Include connection info via X-Connection-Info header for slow connection tracking.
@@ -209,7 +213,7 @@ async def predict(
     # Log connection info if provided
     if x_connection_info:
         logger.debug(f"Connection info from client: {x_connection_info}")
-    
+
     # Parse header values
     user_id = x_user_id
     email = x_user_email
@@ -217,20 +221,20 @@ async def predict(
     app_version = x_app_version
     latitude = float(x_latitude) if x_latitude else None
     longitude = float(x_longitude) if x_longitude else None
-    
+
     # Read image
     image_bytes = await image.read()
     filename = image.filename or "upload"
-    
+
     # Track user submission
     user_tracker = get_user_tracker()
     is_flagged_user = False
     user_trust_score = None
-    
+
     if user_tracker and user_id:
         import hashlib
         image_hash = hashlib.md5(image_bytes).hexdigest()
-        
+
         track_result = user_tracker.record_submission(
             user_id=user_id,
             image_hash=image_hash,
@@ -241,11 +245,11 @@ async def predict(
         )
         is_flagged_user = track_result.get("is_flagged", False)
         user_trust_score = track_result.get("trust_score")
-    
+
     # Validate image
     if pipeline:
         validation_result = pipeline.validate_pre_inference(image_bytes, filename)
-        
+
         if not validation_result.valid:
             error_code = validation_result.error_code or "IMAGE_VALIDATION_FAILED"
             failed_layer = validation_result.failed_layer.value if validation_result.failed_layer else None
@@ -258,22 +262,22 @@ async def predict(
                     "failed_layer": failed_layer,
                 },
             )
-    
+
     # Run inference
     try:
         result = engine.predict(image_bytes)
         inference_time = ctx.elapsed_ms
-        
+
         class_name = result.get("class_name", "")
         class_id = result.get("predicted_class", -1)
         confidence = result.get("confidence", 0.0)
         all_probs = result.get("probabilities", {})
-        
+
         # Check if model is confident enough
         # If confidence is too low, the image might be unclear or not a valid pest image
         MIN_CONFIDENCE_THRESHOLD = 0.35  # Below this, ask for clearer image
         UNCERTAIN_THRESHOLD = 0.50  # Below this, warn about uncertainty
-        
+
         if confidence < MIN_CONFIDENCE_THRESHOLD:
             # Check entropy of predictions - high entropy means model is very uncertain
             if isinstance(all_probs, dict) and len(all_probs) > 1:
@@ -282,7 +286,7 @@ async def predict(
                 entropy = -sum(p * math.log(p + 1e-10) for p in probs_list if p > 0)
                 max_entropy = math.log(len(probs_list))  # Maximum possible entropy
                 normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
-                
+
                 # Very high entropy (> 0.8) means model can't distinguish - likely not a valid image
                 if normalized_entropy > 0.8:
                     raise HTTPException(
@@ -294,10 +298,10 @@ async def predict(
                             "suggestion": "Ensure good lighting and focus on the damaged/affected area of the plant.",
                         },
                     )
-            
+
             # Low confidence but not high entropy - might be edge case
             logger.warning(f"Low confidence prediction: {class_name} at {confidence:.2%}")
-        
+
         # Collect image data silently
         data_collector = get_data_collector()
         image_hash = None
@@ -319,7 +323,7 @@ async def predict(
                 user_trust_score=user_trust_score,
                 is_flagged_user=is_flagged_user,
             )
-        
+
         # Register for feedback
         feedback_id = None
         feedback_mgr = get_feedback_manager()
@@ -333,7 +337,7 @@ async def predict(
                 image_hash=image_hash,
                 user_id=user_id,
             )
-        
+
         # Log prediction for analytics tracking
         if ANALYTICS_AVAILABLE and feedback_id and analytics_log_prediction and user_id:
             analytics_log_prediction(
@@ -342,7 +346,7 @@ async def predict(
                 confidence=confidence,
                 user_id=user_id,
             )
-        
+
         # Build response
         prediction = PredictionResult(
             **{
@@ -351,14 +355,14 @@ async def predict(
                 "confidence": round(confidence, 4),
             }
         )
-        
+
         if include_probabilities:
             probs = result.get("probabilities", {})
             if isinstance(probs, dict):
                 prediction.all_probabilities = {
                     k: round(v, 4) for k, v in probs.items()
                 }
-        
+
         # Run Phase 3 analysis if available
         phase3_data = None
         phase3_manager = get_phase3_manager()
@@ -368,19 +372,19 @@ async def predict(
                 image_tensor = result.get("image_tensor")
                 logits_tensor = result.get("logits_tensor", result.get("logits"))
                 model = getattr(engine, 'model', None)
-                
+
                 if model is not None and image_tensor is not None:
                     p3_result = phase3_manager.run_inference(
                         model, image_tensor, logits_tensor, class_id
                     )
-                    
+
                     if not p3_result.is_empty():
                         phase3_data = {
                             "executed": p3_result.phase3_executed,
                             "processing_time_ms": p3_result.execution_time_ms,
                             "error": p3_result.failure_message if p3_result.had_failure else None,
                         }
-                        
+
                         # Add regions from p3_result.regions (not relevance_scores)
                         if not p3_result.regions.is_empty():
                             regions_list = []
@@ -393,7 +397,7 @@ async def predict(
                                 })
                             phase3_data["regions"] = regions_list
                             phase3_data["top_region_score"] = max(r["relevance_score"] for r in regions_list) if regions_list else None
-                            
+
                         # Add relevance scores if available
                         if not p3_result.relevance_scores.is_empty():
                             if phase3_data.get("regions"):
@@ -401,7 +405,7 @@ async def predict(
                                     score = p3_result.relevance_scores.region_scores.get(r["region_id"], r["relevance_score"])
                                     r["relevance_score"] = float(score)
                                 phase3_data["top_region_score"] = max(r["relevance_score"] for r in phase3_data["regions"])
-                        
+
                         # Add multi-label predictions
                         if not p3_result.multi_label.is_empty():
                             predictions = []
@@ -415,7 +419,7 @@ async def predict(
                                 })
                             # Also add from class_probabilities if available
                             if not predictions and p3_result.multi_label.class_probabilities:
-                                for cid, prob in sorted(p3_result.multi_label.class_probabilities.items(), 
+                                for cid, prob in sorted(p3_result.multi_label.class_probabilities.items(),
                                                        key=lambda x: x[1], reverse=True)[:3]:
                                     label_name = class_names[cid] if cid < len(class_names) else f"class_{cid}"
                                     predictions.append({
@@ -423,14 +427,14 @@ async def predict(
                                         "confidence": float(prob),
                                     })
                             phase3_data["multi_label"] = predictions  # Direct list, not wrapped
-                        
+
                         # Add attention map info
                         if not p3_result.attention_map.is_empty():
                             phase3_data["attention_map"] = getattr(p3_result.attention_map, 'attention_map_base64', None)
                             phase3_data["attention_method"] = p3_result.attention_map.generation_method
             except Exception as p3_err:
                 logger.debug(f"Phase 3 analysis skipped: {p3_err}")
-        
+
         # Build Phase 3 response if available
         phase3_response = None
         if phase3_data and isinstance(phase3_data, dict):
@@ -443,7 +447,7 @@ async def predict(
                         map_uri=phase3_data.get("attention_map"),
                         method=phase3_data.get("attention_method", "grad_cam"),
                     )
-                
+
                 # Build regions info
                 regions_list = None
                 if phase3_data.get("regions"):
@@ -456,7 +460,7 @@ async def predict(
                         )
                         for i, r in enumerate(phase3_data["regions"])
                     ]
-                
+
                 # Build multi-label predictions
                 multi_label_list = None
                 if phase3_data.get("multi_label"):
@@ -467,7 +471,7 @@ async def predict(
                         )
                         for p in phase3_data["multi_label"]
                     ]
-                
+
                 phase3_response = Phase3Response(
                     is_experimental=True,
                     executed=phase3_data.get("executed", False),
@@ -485,7 +489,7 @@ async def predict(
                     executed=False,
                     error=str(p3_err),
                 )
-        
+
         # In lite mode, return minimal response for slow connections (2G/3G)
         if lite:
             return PredictionResponse(
@@ -497,7 +501,7 @@ async def predict(
                 feedback_id=feedback_id,
                 phase3=None,  # Skip Phase 3 data
             )
-        
+
         return PredictionResponse(
             status="success",
             request_id=ctx.request_id,
@@ -511,7 +515,7 @@ async def predict(
             feedback_id=feedback_id,
             phase3=phase3_response,
         )
-    
+
     except Exception as e:
         logger.exception(f"Inference error: {e}")
         raise HTTPException(
@@ -530,7 +534,7 @@ async def predict_base64(
 ):
     """
     Predict from base64 encoded image.
-    
+
     Alternative to file upload for mobile/JS clients.
     """
     # Decode base64
@@ -541,11 +545,11 @@ async def predict_base64(
             status_code=400,
             detail={"code": "INVALID_BASE64", "message": "Invalid base64 image data"},
         )
-    
+
     # Validate
     if pipeline:
         validation_result = pipeline.validate(image_bytes, "base64_upload")
-        
+
         if not validation_result.valid:
             raise HTTPException(
                 status_code=400,
@@ -555,15 +559,15 @@ async def predict_base64(
                     "failed_layer": validation_result.failed_layer,
                 },
             )
-    
+
     # Inference
     try:
         result = engine.predict(image_bytes)
-        
+
         class_name = result.get("class_name", "")
         class_id = result.get("predicted_class", -1)
         confidence = result.get("confidence", 0.0)
-        
+
         prediction = PredictionResult(
             **{
                 "class": class_name,
@@ -571,14 +575,14 @@ async def predict_base64(
                 "confidence": round(confidence, 4),
             }
         )
-        
+
         if request_body.include_probabilities:
             probs = result.get("probabilities", {})
             if isinstance(probs, dict):
                 prediction.all_probabilities = {
                     k: round(v, 4) for k, v in probs.items()
                 }
-        
+
         # Run Phase 3 analysis if available
         phase3_response = None
         phase3_manager = get_phase3_manager()
@@ -588,14 +592,14 @@ async def predict_base64(
                 image_tensor = result.get("image_tensor")
                 logits_tensor = result.get("logits_tensor", result.get("logits"))
                 model = getattr(engine, 'model', None)
-                
+
                 logger.info(f"Phase 3: model={model is not None}, image_tensor={image_tensor is not None}, logits={logits_tensor is not None}")
-                
+
                 if model is not None and image_tensor is not None:
                     p3_result = phase3_manager.run_inference(
                         model, image_tensor, logits_tensor, class_id
                     )
-                    
+
                     # Log Phase 3 result details
                     logger.info(f"Phase 3 result: executed={p3_result.phase3_executed}, "
                                f"features_empty={p3_result.features.is_empty()}, "
@@ -605,14 +609,14 @@ async def predict_base64(
                                f"attention_empty={p3_result.attention_map.is_empty()}, "
                                f"had_failure={p3_result.had_failure}, "
                                f"failure_msg={p3_result.failure_message}")
-                    
+
                     # Always build phase3_data if Phase 3 executed
                     phase3_data = {
                         "executed": p3_result.phase3_executed,
                         "processing_time_ms": p3_result.execution_time_ms,
                         "error": p3_result.failure_message if p3_result.had_failure else None,
                     }
-                    
+
                     # Add regions from p3_result.regions (not relevance_scores)
                     if not p3_result.regions.is_empty():
                         regions_list = []
@@ -625,7 +629,7 @@ async def predict_base64(
                             })
                         phase3_data["regions"] = regions_list
                         phase3_data["top_region_score"] = max(r["relevance_score"] for r in regions_list) if regions_list else None
-                        
+
                     # Add relevance scores if available
                     if not p3_result.relevance_scores.is_empty():
                         # Update region relevance scores
@@ -634,7 +638,7 @@ async def predict_base64(
                                 score = p3_result.relevance_scores.region_scores.get(r["region_id"], r["relevance_score"])
                                 r["relevance_score"] = float(score)
                             phase3_data["top_region_score"] = max(r["relevance_score"] for r in phase3_data["regions"])
-                    
+
                     # Add multi-label predictions - convert class IDs to labels
                     if not p3_result.multi_label.is_empty():
                         predictions = []
@@ -648,7 +652,7 @@ async def predict_base64(
                             })
                         # Also add from class_probabilities if available
                         if not predictions and p3_result.multi_label.class_probabilities:
-                            for cid, prob in sorted(p3_result.multi_label.class_probabilities.items(), 
+                            for cid, prob in sorted(p3_result.multi_label.class_probabilities.items(),
                                                    key=lambda x: x[1], reverse=True)[:3]:
                                 label_name = class_names[cid] if cid < len(class_names) else f"class_{cid}"
                                 predictions.append({
@@ -656,12 +660,12 @@ async def predict_base64(
                                     "confidence": float(prob),
                                 })
                         phase3_data["multi_label"] = predictions  # Direct list, not wrapped
-                    
+
                     # Add attention map info
                     if not p3_result.attention_map.is_empty():
                         phase3_data["attention_map"] = getattr(p3_result.attention_map, 'attention_map_base64', None)
                         phase3_data["attention_method"] = p3_result.attention_map.generation_method
-                    
+
                     # Build Phase 3 response
                     attention_info = None
                     if phase3_data.get("attention_map"):
@@ -670,7 +674,7 @@ async def predict_base64(
                             map_uri=phase3_data.get("attention_map"),
                             method=phase3_data.get("attention_method", "grad_cam"),
                         )
-                    
+
                     regions_info = None
                     if phase3_data.get("regions"):
                         regions_info = [
@@ -682,7 +686,7 @@ async def predict_base64(
                             )
                             for i, r in enumerate(phase3_data["regions"])
                         ]
-                    
+
                     multi_label_list = None
                     if phase3_data.get("multi_label"):
                         multi_label_list = [
@@ -692,7 +696,7 @@ async def predict_base64(
                             )
                             for p in phase3_data["multi_label"]
                         ]
-                    
+
                     phase3_response = Phase3Response(
                         is_experimental=True,
                         executed=phase3_data.get("executed", False),
@@ -705,7 +709,7 @@ async def predict_base64(
                     )
             except Exception as p3_err:
                 logger.debug(f"Phase 3 analysis skipped: {p3_err}")
-        
+
         return PredictionResponse(
             status="success",
             request_id=ctx.request_id,
@@ -718,7 +722,7 @@ async def predict_base64(
             ),
             phase3=phase3_response,
         )
-    
+
     except Exception as e:
         logger.exception(f"Inference error: {e}")
         raise HTTPException(
@@ -729,7 +733,7 @@ async def predict_base64(
 
 @router.post("/predict/batch", response_model=BatchPredictionResponse)
 async def predict_batch(
-    images: List[UploadFile] = File(..., description="Multiple images to classify"),
+    images: list[UploadFile] = File(..., description="Multiple images to classify"),
     api_key: dict = Depends(check_rate_limit),
     engine=Depends(get_inference_engine),
     pipeline=Depends(get_validation_pipeline),
@@ -737,12 +741,12 @@ async def predict_batch(
 ):
     """
     Batch image prediction.
-    
+
     Upload multiple images for classification.
     Maximum 10 images per request.
     """
     max_batch = 10
-    
+
     if len(images) > max_batch:
         raise HTTPException(
             status_code=400,
@@ -751,15 +755,15 @@ async def predict_batch(
                 "message": f"Maximum batch size is {max_batch} images",
             },
         )
-    
+
     results = []
     successful = 0
     failed = 0
-    
+
     for i, image in enumerate(images):
         image_bytes = await image.read()
         filename = image.filename or f"image_{i}"
-        
+
         # Validate
         if pipeline:
             validation_result = pipeline.validate(image_bytes, filename)
@@ -772,13 +776,13 @@ async def predict_batch(
                 ))
                 failed += 1
                 continue
-        
+
         # Predict
         try:
             item_start = time.time()
             result = engine.predict(image_bytes)
             item_time = (time.time() - item_start) * 1000
-            
+
             results.append(BatchResultItem(
                 index=i,
                 filename=filename,
@@ -793,7 +797,7 @@ async def predict_batch(
                 inference_time_ms=round(item_time, 2),
             ))
             successful += 1
-        
+
         except Exception as e:
             results.append(BatchResultItem(
                 index=i,
@@ -802,9 +806,9 @@ async def predict_batch(
                 error=str(e),
             ))
             failed += 1
-    
+
     total_time = ctx.elapsed_ms
-    
+
     return BatchPredictionResponse(
         status="success" if failed == 0 else "partial" if successful > 0 else "error",
         request_id=ctx.request_id,
@@ -828,14 +832,14 @@ async def get_stats(
 ):
     """
     Get API statistics.
-    
+
     Admin only endpoint.
     """
     stats = {"timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    
+
     if key_manager:
         stats["api_keys"] = key_manager.get_stats()
-    
+
     return {"status": "success", "stats": stats}
 
 
@@ -849,7 +853,7 @@ async def create_api_key(
 ):
     """
     Create new API key.
-    
+
     Admin only endpoint.
     """
     if key_manager is None:
@@ -857,9 +861,9 @@ async def create_api_key(
             status_code=503,
             detail={"code": "KEY_MANAGER_UNAVAILABLE", "message": "API key manager not available"},
         )
-    
+
     new_key = key_manager.generate_key(name=name, tier=tier, description=description)
-    
+
     return {
         "status": "success",
         "key": new_key,
@@ -874,19 +878,19 @@ async def submit_feedback(
 ):
     """
     Submit feedback on a prediction.
-    
+
     Use the feedback_id from a prediction response to confirm if the
     prediction was correct or provide the correct classification.
     This helps improve the model over time.
     """
     feedback_mgr = get_feedback_manager()
-    
+
     if feedback_mgr is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "FEEDBACK_UNAVAILABLE", "message": "Feedback system not available"},
         )
-    
+
     result = feedback_mgr.submit_feedback(
         feedback_id=feedback.feedback_id,
         is_correct=feedback.is_correct,
@@ -897,7 +901,7 @@ async def submit_feedback(
         device_info=feedback.device_info,
         app_version=feedback.app_version,
     )
-    
+
     if result["status"] == "error":
         raise HTTPException(
             status_code=400,
@@ -907,7 +911,7 @@ async def submit_feedback(
                 "valid_classes": result.get("valid_classes"),
             },
         )
-    
+
     # Log correction for analytics tracking
     if ANALYTICS_AVAILABLE and analytics_log_correction:
         analytics_log_correction(
@@ -916,7 +920,7 @@ async def submit_feedback(
             actual_class=result["recorded"]["corrected_to"] or result["recorded"]["original_prediction"],
             is_correct=result["recorded"]["is_correct"],
         )
-    
+
     return FeedbackResponse(
         status="success",
         request_id=None,
@@ -937,10 +941,10 @@ async def get_feedback_classes(
 ):
     """
     Get valid class names for feedback corrections.
-    
+
     Returns the list of valid class names that can be used when
     submitting a correction via the feedback endpoint.
-    
+
     In addition to pest classes, special categories are also accepted:
     - "junk" or "unrelated": Image is not related to pest detection
     - "other": Some plant issue not in our classification list
@@ -959,12 +963,12 @@ async def get_feedback_classes(
         "root borer",
         "termite",
     ]
-    
+
     # Special feedback categories (not pest classes)
     special_categories = ["junk", "unrelated", "other", "unknown"]
-    
+
     classes = engine.class_names if engine else default_classes
-    
+
     return ClassesResponse(
         status="success",
         request_id=None,
@@ -984,20 +988,20 @@ async def get_feedback_stats(
 ):
     """
     Get feedback statistics.
-    
+
     Admin only endpoint. Returns statistics about user feedback including
     accuracy from user reports and common misclassifications.
     """
     feedback_mgr = get_feedback_manager()
-    
+
     if feedback_mgr is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "FEEDBACK_UNAVAILABLE", "message": "Feedback system not available"},
         )
-    
+
     stats = feedback_mgr.get_statistics()
-    
+
     return FeedbackStatsResponse(
         status="success",
         request_id=None,
@@ -1026,12 +1030,12 @@ async def report_connection_samples(
 ):
     """
     Report connection quality samples from the mobile app.
-    
+
     Used to track network conditions in different locations for analytics.
     Helps identify areas with poor connectivity for optimization.
     """
     tracker = get_connection_tracker()
-    
+
     samples_data = [
         {
             "timestamp": s.timestamp,
@@ -1043,16 +1047,16 @@ async def report_connection_samples(
         }
         for s in request.samples
     ]
-    
+
     recorded = tracker.record_samples(
         device_id=request.device_id,
         user_id=request.user_id,
         app_version=request.app_version,
         samples=samples_data,
     )
-    
+
     logger.info(f"Recorded {recorded} connection samples from device {request.device_id}")
-    
+
     return ConnectionReportResponse(
         status="success",
         request_id=ctx.request_id,
@@ -1069,13 +1073,13 @@ async def get_connection_stats(
 ):
     """
     Get connection quality statistics.
-    
+
     Admin only endpoint. Returns statistics about network connectivity
     including slow connection locations for service optimization.
     """
     tracker = get_connection_tracker()
     stats = tracker.get_statistics(days=days)
-    
+
     return ConnectionStatsResponse(
         status="success",
         request_id=None,
@@ -1095,19 +1099,19 @@ async def list_users(
 ):
     """
     List all users and their statistics.
-    
+
     Admin only endpoint.
     """
     user_tracker = get_user_tracker()
-    
+
     if user_tracker is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "USER_TRACKER_UNAVAILABLE", "message": "User tracker not available"},
         )
-    
+
     users = user_tracker.get_all_users()
-    
+
     return {
         "status": "success",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1122,19 +1126,19 @@ async def list_flagged_users(
 ):
     """
     List all flagged (suspicious) users.
-    
+
     Admin only endpoint.
     """
     user_tracker = get_user_tracker()
-    
+
     if user_tracker is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "USER_TRACKER_UNAVAILABLE", "message": "User tracker not available"},
         )
-    
+
     flagged = user_tracker.get_flagged_users()
-    
+
     return {
         "status": "success",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1150,25 +1154,25 @@ async def get_user(
 ):
     """
     Get detailed statistics for a specific user.
-    
+
     Admin only endpoint.
     """
     user_tracker = get_user_tracker()
-    
+
     if user_tracker is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "USER_TRACKER_UNAVAILABLE", "message": "User tracker not available"},
         )
-    
+
     user_stats = user_tracker.get_user_stats(user_id)
-    
+
     if user_stats is None:
         raise HTTPException(
             status_code=404,
             detail={"code": "USER_NOT_FOUND", "message": f"User {user_id} not found"},
         )
-    
+
     return {
         "status": "success",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1184,25 +1188,25 @@ async def unflag_user(
 ):
     """
     Unflag a user (remove suspicious status).
-    
+
     Admin only endpoint.
     """
     user_tracker = get_user_tracker()
-    
+
     if user_tracker is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "USER_TRACKER_UNAVAILABLE", "message": "User tracker not available"},
         )
-    
+
     success = user_tracker.unflag_user(user_id, admin_note=note)
-    
+
     if not success:
         raise HTTPException(
             status_code=404,
             detail={"code": "USER_NOT_FOUND", "message": f"User {user_id} not found"},
         )
-    
+
     return {
         "status": "success",
         "message": f"User {user_id} has been unflagged",
@@ -1216,19 +1220,19 @@ async def get_data_collection_stats(
 ):
     """
     Get data collection statistics.
-    
+
     Admin only endpoint. Shows collected images stats.
     """
     data_collector = get_data_collector()
-    
+
     if data_collector is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "DATA_COLLECTOR_UNAVAILABLE", "message": "Data collector not available"},
         )
-    
+
     stats = data_collector.get_statistics()
-    
+
     return {
         "status": "success",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1243,14 +1247,14 @@ async def export_data(
 ):
     """
     Export collected data to CSV/Excel.
-    
+
     Admin only endpoint.
     """
     user_tracker = get_user_tracker()
     data_collector = get_data_collector()
-    
+
     exports = {}
-    
+
     if user_tracker:
         try:
             if format == "excel":
@@ -1259,13 +1263,13 @@ async def export_data(
                 exports["users"] = user_tracker.export_to_csv()
         except Exception as e:
             exports["users_error"] = str(e)
-    
+
     if data_collector:
         try:
             exports["images"] = data_collector.export_to_csv()
         except Exception as e:
             exports["images_error"] = str(e)
-    
+
     return {
         "status": "success",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1282,23 +1286,23 @@ async def get_training_data(
 ):
     """
     Get data suitable for model retraining.
-    
+
     Admin only endpoint. Returns image paths and labels.
     """
     data_collector = get_data_collector()
-    
+
     if data_collector is None:
         raise HTTPException(
             status_code=503,
             detail={"code": "DATA_COLLECTOR_UNAVAILABLE", "message": "Data collector not available"},
         )
-    
+
     training_data = data_collector.get_training_data(
         include_correct=include_correct,
         include_corrected=include_corrected,
         only_trusted=only_trusted,
     )
-    
+
     return {
         "status": "success",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1317,7 +1321,7 @@ async def get_retrain_status(
 ):
     """
     Get model retraining status.
-    
+
     Shows:
     - Current training status (is_training, progress)
     - Model version and total retrains count
@@ -1327,14 +1331,14 @@ async def get_retrain_status(
     """
     try:
         from ..training.retrain_manager import get_retrain_manager
-        
+
         retrain_manager = get_retrain_manager(
             model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
             feedback_dir="./feedback_data/images",
         )
-        
+
         status = retrain_manager.get_status()
-        
+
         return {
             "status": "success",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1366,7 +1370,7 @@ async def get_retrain_status(
                 "blocked_reason": status.retrain_blocked_reason,  # Why retraining is blocked
             },
         }
-        
+
     except Exception as e:
         logger.exception("Error getting retrain status")
         raise HTTPException(
@@ -1381,7 +1385,7 @@ async def get_retrain_history(
 ):
     """
     Get complete model retraining history.
-    
+
     Returns a list of all past retraining runs with:
     - Version number
     - Timestamp
@@ -1391,21 +1395,21 @@ async def get_retrain_history(
     """
     try:
         from ..training.retrain_manager import get_retrain_manager
-        
+
         retrain_manager = get_retrain_manager(
             model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
             feedback_dir="./feedback_data/images",
         )
-        
+
         history = retrain_manager.get_training_history()
-        
+
         return {
             "status": "success",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "total_entries": len(history),
             "history": history,
         }
-        
+
     except Exception as e:
         logger.exception("Error getting retrain history")
         raise HTTPException(
@@ -1421,31 +1425,31 @@ async def trigger_retraining(
 ):
     """
     Manually trigger model retraining.
-    
+
     This will:
     1. Backup the current model
     2. Fine-tune with feedback images
     3. Update the deployment model
-    
+
     Use force=true to retrain even if thresholds aren't met.
     """
     try:
         from ..training.retrain_manager import get_retrain_manager
-        
+
         retrain_manager = get_retrain_manager(
             model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
             feedback_dir="./feedback_data/images",
         )
-        
+
         status = retrain_manager.get_status()
-        
+
         if status.is_training:
             return {
                 "status": "info",
                 "message": "Retraining already in progress",
                 "progress": round(status.training_progress * 100, 1),
             }
-        
+
         if not force and not status.ready_to_retrain:
             return {
                 "status": "info",
@@ -1454,10 +1458,10 @@ async def trigger_retraining(
                 "threshold_total": status.threshold_total,
                 "hint": "Use force=true to retrain anyway",
             }
-        
+
         # Start retraining
         started = retrain_manager.start_retraining(force=force)
-        
+
         if started:
             return {
                 "status": "success",
@@ -1469,7 +1473,7 @@ async def trigger_retraining(
                 "status": "error",
                 "message": "Failed to start retraining",
             }
-            
+
     except Exception as e:
         logger.exception("Error triggering retraining")
         raise HTTPException(
@@ -1483,20 +1487,20 @@ async def trigger_retraining(
 async def get_retrain_status_public():
     """
     Get model retraining status (public endpoint).
-    
+
     Shows basic training status without admin details.
     Available at both /retrain/status and /retraining/status.
     """
     try:
         from ..training.retrain_manager import get_retrain_manager
-        
+
         retrain_manager = get_retrain_manager(
             model_path="D:/KnowledgeDistillation/student_model_rotation_robust.pt",
             feedback_dir="./feedback_data/images",
         )
-        
+
         status = retrain_manager.get_status()
-        
+
         return {
             "status": "success",
             "is_training": status.is_training,
@@ -1505,7 +1509,7 @@ async def get_retrain_status_public():
             "feedback_images_collected": status.total_feedback_images,
             "ready_for_improvement": status.ready_to_retrain,
         }
-        
+
     except Exception as e:
         return {
             "status": "unavailable",

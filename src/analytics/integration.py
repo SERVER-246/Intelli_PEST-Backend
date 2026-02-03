@@ -12,7 +12,7 @@ Usage:
     # In server startup (run_server.py or main.py):
     from src.analytics.integration import init_analytics
     init_analytics(model_version="v1.0.6")
-    
+
     # In prediction endpoint (routers.py):
     from src.analytics.integration import log_prediction
     log_prediction(
@@ -21,7 +21,7 @@ Usage:
         confidence=confidence,
         image_hash=image_hash
     )
-    
+
     # In feedback endpoint (routers.py):
     from src.analytics.integration import log_correction
     log_correction(
@@ -33,8 +33,8 @@ Usage:
 """
 
 import logging
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ _initialized = False
 def get_tracker():
     """Get the global correction tracker instance."""
     global _tracker, _initialized
-    
+
     if not _initialized:
         try:
             from .correction_tracker import CorrectionTracker
@@ -57,47 +57,47 @@ def get_tracker():
             logger.error(f"Failed to initialize analytics tracker: {e}")
             _tracker = None
             _initialized = True  # Mark as initialized to avoid repeated attempts
-    
+
     return _tracker
 
 
 def init_analytics(
-    model_version: Optional[str] = None,
-    data_dir: Optional[str] = None
+    model_version: str | None = None,
+    data_dir: str | None = None
 ) -> bool:
     """
     Initialize analytics system with model version.
-    
+
     Call this on server startup.
-    
+
     Args:
         model_version: Current model version string (e.g., "v1.0.6")
         data_dir: Directory for analytics data
-        
+
     Returns:
         True if initialization successful
     """
     global _tracker, _initialized
-    
+
     try:
         from .correction_tracker import CorrectionTracker
-        
+
         if data_dir:
             _tracker = CorrectionTracker(data_dir=data_dir)
         else:
             _tracker = CorrectionTracker()
-        
+
         _initialized = True
-        
+
         # Set model version if provided
         if model_version:
             _tracker.set_model_version(model_version)
             logger.info(f"Analytics initialized with model version: {model_version}")
         else:
             logger.info("Analytics initialized (no model version set)")
-        
+
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize analytics: {e}")
         import traceback
@@ -111,18 +111,18 @@ def log_prediction(
     prediction_id: str,
     predicted_class: str,
     confidence: float,
-    predicted_class_id: Optional[int] = None,
-    image_hash: Optional[str] = None,
-    user_id: Optional[str] = None,
-    attention_map: Optional[Any] = None,
-    request_id: Optional[str] = None,
-    metadata: Optional[Dict] = None
+    predicted_class_id: int | None = None,
+    image_hash: str | None = None,
+    user_id: str | None = None,
+    attention_map: Any | None = None,
+    request_id: str | None = None,
+    metadata: dict | None = None
 ) -> bool:
     """
     Log a prediction for tracking.
-    
+
     Call this after successful inference in the prediction endpoint.
-    
+
     Args:
         prediction_id: Unique ID for this prediction (feedback_id)
         predicted_class: Predicted class name
@@ -133,15 +133,15 @@ def log_prediction(
         attention_map: Optional attention map data
         request_id: Optional request ID
         metadata: Optional additional metadata
-        
+
     Returns:
         True if logged successfully
     """
     tracker = get_tracker()
-    
+
     if tracker is None:
         return False
-    
+
     try:
         # Convert attention_map to regions format if provided
         attention_regions = None
@@ -151,7 +151,7 @@ def log_prediction(
             if isinstance(attention_map, dict) and 'regions' in attention_map:
                 attention_regions = attention_map.get('regions')
                 attention_entropy = attention_map.get('entropy', 0.0)
-        
+
         record_id = tracker.log_prediction(
             image_id=prediction_id,  # Use prediction_id as image_id
             predicted_class=predicted_class,
@@ -161,10 +161,10 @@ def log_prediction(
             device_id=metadata.get('device_id', '') if metadata else '',
             session_id=user_id or ''
         )
-        
+
         logger.debug(f"Logged prediction: {prediction_id} -> {predicted_class} ({confidence:.2%})")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to log prediction: {e}")
         return False
@@ -175,15 +175,15 @@ def log_correction(
     predicted_class: str,
     actual_class: str,
     is_correct: bool,
-    confidence: Optional[float] = None,
-    attention_map: Optional[Any] = None,
-    metadata: Optional[Dict] = None
+    confidence: float | None = None,
+    attention_map: Any | None = None,
+    metadata: dict | None = None
 ) -> bool:
     """
     Log a correction from user feedback.
-    
+
     Call this when feedback is submitted.
-    
+
     Args:
         prediction_id: ID of the original prediction (feedback_id)
         predicted_class: What the model predicted
@@ -192,67 +192,67 @@ def log_correction(
         confidence: Original prediction confidence
         attention_map: Optional attention map data
         metadata: Optional additional metadata
-        
+
     Returns:
         True if logged successfully
     """
     tracker = get_tracker()
-    
+
     if tracker is None:
         return False
-    
+
     try:
         # Determine actual class - if correct, use predicted class
         final_actual_class = predicted_class if is_correct else actual_class
-        
+
         record = tracker.log_correction(
             image_id=prediction_id,  # Use prediction_id as image_id
             actual_class=final_actual_class,
             corrector_id=metadata.get('user_id', '') if metadata else '',
             correction_source=metadata.get('source', 'feedback') if metadata else 'feedback'
         )
-        
+
         if is_correct:
             logger.debug(f"Logged confirmation: {prediction_id} -> {predicted_class} ✓")
         else:
             logger.info(f"Logged correction: {prediction_id} -> {predicted_class} → {actual_class}")
-        
+
         return record is not None
-        
+
     except Exception as e:
         logger.error(f"Failed to log correction: {e}")
         return False
 
 
-def get_summary() -> Dict[str, Any]:
+def get_summary() -> dict[str, Any]:
     """
     Get quick summary of correction statistics.
-    
+
     Returns:
         Dictionary with summary statistics
     """
     tracker = get_tracker()
-    
+
     if tracker is None:
         return {"error": "Analytics not initialized"}
-    
+
     try:
         from .performance_analytics import PerformanceAnalytics
         analytics = PerformanceAnalytics(data_dir=str(tracker.data_dir))
         return analytics.get_overall_metrics()
-        
+
     except Exception as e:
         logger.error(f"Failed to get summary: {e}")
         return {"error": str(e)}
 
 
-def generate_report(output_dir: Optional[str] = None) -> Dict[str, Any]:
+def generate_report(output_dir: str | None = None) -> dict[str, Any]:
     """
     Generate comprehensive performance report.
-    
+
     Args:
         output_dir: Directory to save report files
-        
+
     Returns:
         Dictionary with paths to generated files
     """
@@ -260,7 +260,7 @@ def generate_report(output_dir: Optional[str] = None) -> Dict[str, Any]:
         from .performance_dashboard import PerformanceDashboard
         dashboard = PerformanceDashboard()
         return dashboard.generate_full_report(output_dir=output_dir)
-        
+
     except Exception as e:
         logger.error(f"Failed to generate report: {e}")
         return {"error": str(e)}

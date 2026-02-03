@@ -52,7 +52,7 @@ class AppVersionResponse(BaseModel):
     filename: str
     file_size_mb: float
     force_update: bool
-    release_notes: Optional[str] = None
+    release_notes: str | None = None
 
 
 class ModelInfoResponse(BaseModel):
@@ -61,7 +61,7 @@ class ModelInfoResponse(BaseModel):
     model_version: str
     num_classes: int
     class_names: list
-    last_trained: Optional[str] = None
+    last_trained: str | None = None
     total_fine_tunes: int = 0
     total_comprehensive: int = 0
 
@@ -77,7 +77,7 @@ class AvailableApksResponse(BaseModel):
 # Helper Functions
 # =============================================================================
 
-def parse_apk_timestamp(filename: str) -> Optional[datetime]:
+def parse_apk_timestamp(filename: str) -> datetime | None:
     """Parse timestamp from APK filename."""
     match = APK_PATTERN.match(filename)
     if match:
@@ -95,39 +95,39 @@ def timestamp_to_version(dt: datetime) -> str:
     return f"{dt.year}.{dt.month:02d}{dt.day:02d}"
 
 
-def get_latest_apk() -> Optional[dict]:
+def get_latest_apk() -> dict | None:
     """Get info about the latest APK."""
     if not APK_DIR.exists():
         logger.warning(f"APK directory does not exist: {APK_DIR}")
         return None
-    
+
     apk_files = list(APK_DIR.glob("intelli-pest-release-*.apk"))
     if not apk_files:
         logger.warning(f"No APK files found in: {APK_DIR}")
         return None
-    
+
     # Parse timestamps and find the latest
     latest_apk = None
     latest_timestamp = None
-    
+
     for apk_path in apk_files:
         timestamp = parse_apk_timestamp(apk_path.name)
         if timestamp:
             if latest_timestamp is None or timestamp > latest_timestamp:
                 latest_timestamp = timestamp
                 latest_apk = apk_path
-    
+
     if latest_apk is None or latest_timestamp is None:
         logger.warning("No valid APK files with proper naming found")
         return None
-    
+
     # Get file size
     file_size = latest_apk.stat().st_size
     file_size_mb = round(file_size / (1024 * 1024), 2)
-    
+
     # Generate version from timestamp
     version = timestamp_to_version(latest_timestamp)
-    
+
     return {
         "filename": latest_apk.name,
         "path": latest_apk,
@@ -141,11 +141,11 @@ def get_latest_apk() -> Optional[dict]:
 def compare_versions(v1: str, v2: str) -> int:
     """
     Compare two version strings.
-    
+
     Supports formats:
     - Semantic: "1.0.0", "1.2.3"
     - Date-based: "2026.0109.1430"
-    
+
     Returns:
         -1 if v1 < v2
          0 if v1 == v2
@@ -154,35 +154,35 @@ def compare_versions(v1: str, v2: str) -> int:
     # Normalize versions by replacing dashes with dots
     parts1 = v1.replace("-", ".").split(".")
     parts2 = v2.replace("-", ".").split(".")
-    
+
     # Convert to integers for comparison
     nums1 = []
     nums2 = []
-    
+
     for p in parts1:
         try:
             nums1.append(int(p))
         except ValueError:
             nums1.append(0)
-    
+
     for p in parts2:
         try:
             nums2.append(int(p))
         except ValueError:
             nums2.append(0)
-    
+
     # Pad shorter list with zeros
     max_len = max(len(nums1), len(nums2))
     nums1.extend([0] * (max_len - len(nums1)))
     nums2.extend([0] * (max_len - len(nums2)))
-    
+
     # Compare element by element
     for n1, n2 in zip(nums1, nums2):
         if n1 < n2:
             return -1
         elif n1 > n2:
             return 1
-    
+
     return 0
 
 
@@ -210,21 +210,21 @@ def get_model_info() -> dict:
         "total_fine_tunes": 0,
         "total_comprehensive": 0,
     }
-    
+
     # Try to read from retrain status file
     if RETRAIN_STATUS_FILE.exists():
         try:
-            with open(RETRAIN_STATUS_FILE, "r") as f:
+            with open(RETRAIN_STATUS_FILE) as f:
                 status = json.load(f)
-            
+
             info["version"] = status.get("current_version_string", "v1.0.0")
             info["last_trained"] = status.get("last_trained")
             info["total_fine_tunes"] = status.get("total_fine_tunes", 0)
             info["total_comprehensive"] = status.get("total_comprehensive", 0)
-            
+
         except Exception as e:
             logger.error(f"Failed to read retrain status: {e}")
-    
+
     return info
 
 
@@ -233,18 +233,18 @@ def get_model_info() -> dict:
 # =============================================================================
 
 @app_router.get("/version", response_model=AppVersionResponse)
-async def get_app_version(client_version: Optional[str] = None):
+async def get_app_version(client_version: str | None = None):
     """
     Get latest app version information.
-    
+
     Returns the latest APK version, download URL, and whether update is forced.
     The app should call this on startup to check for updates.
-    
+
     Args:
         client_version: The current version installed on the client (optional query param)
     """
     latest = get_latest_apk()
-    
+
     if latest is None:
         raise HTTPException(
             status_code=404,
@@ -253,10 +253,10 @@ async def get_app_version(client_version: Optional[str] = None):
                 "message": "No APK files available for download",
             }
         )
-    
+
     # Build download URL (relative, will be accessed via same server)
     download_url = f"/api/app/download/{latest['filename']}"
-    
+
     # Determine if force update is needed by comparing versions
     # Only force update if there's actually a newer version available
     force_update = False
@@ -269,7 +269,7 @@ async def get_app_version(client_version: Optional[str] = None):
         # No client_version = legacy APK that doesn't send version
         logger.warning("No client_version provided - legacy APK detected, forcing update")
         force_update = True
-    
+
     return AppVersionResponse(
         status="success",
         latest_version=latest["version"],
@@ -286,10 +286,10 @@ async def get_app_version(client_version: Optional[str] = None):
 async def download_apk(filename: str):
     """
     Download an APK file.
-    
+
     Args:
         filename: Name of the APK file to download
-        
+
     Returns:
         The APK file for installation
     """
@@ -302,9 +302,9 @@ async def download_apk(filename: str):
                 "message": "Invalid APK filename format",
             }
         )
-    
+
     apk_path = APK_DIR / filename
-    
+
     if not apk_path.exists():
         raise HTTPException(
             status_code=404,
@@ -313,7 +313,7 @@ async def download_apk(filename: str):
                 "message": f"APK file not found: {filename}",
             }
         )
-    
+
     return FileResponse(
         path=str(apk_path),
         filename=filename,
@@ -325,7 +325,7 @@ async def download_apk(filename: str):
 async def list_available_apks():
     """
     List all available APK versions.
-    
+
     Returns a list of all APK files with their version info.
     """
     if not APK_DIR.exists():
@@ -334,10 +334,10 @@ async def list_available_apks():
             apks=[],
             total=0,
         )
-    
+
     apk_files = list(APK_DIR.glob("intelli-pest-release-*.apk"))
     apks = []
-    
+
     for apk_path in apk_files:
         timestamp = parse_apk_timestamp(apk_path.name)
         if timestamp:
@@ -349,10 +349,10 @@ async def list_available_apks():
                 "file_size_mb": round(file_size / (1024 * 1024), 2),
                 "download_url": f"/api/app/download/{apk_path.name}",
             })
-    
+
     # Sort by timestamp (newest first)
     apks.sort(key=lambda x: x["build_date"], reverse=True)
-    
+
     return AvailableApksResponse(
         status="success",
         apks=apks,
@@ -364,12 +364,12 @@ async def list_available_apks():
 async def get_model_info_endpoint():
     """
     Get current model information.
-    
+
     Returns the model version, number of classes, and training info.
     The app can use this to display dynamic model information to users.
     """
     info = get_model_info()
-    
+
     return ModelInfoResponse(
         status="success",
         model_version=info["version"],

@@ -6,12 +6,12 @@ Tests covering FastAPI app, inference engine, filters, and utilities.
 Run with: python -m pytest tests/ -v
 """
 
-import unittest
-import sys
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 import json
 import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 # Set up path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -24,7 +24,7 @@ os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')
 
 class TestFastAPIImports(unittest.TestCase):
     """Test that all FastAPI modules can be imported."""
-    
+
     def test_main_app_import(self):
         """Test main FastAPI app imports."""
         try:
@@ -33,7 +33,7 @@ class TestFastAPIImports(unittest.TestCase):
             self.assertTrue(callable(create_app))
         except ImportError as e:
             self.skipTest(f"FastAPI not available: {e}")
-    
+
     def test_routers_import(self):
         """Test routers module imports."""
         try:
@@ -41,7 +41,7 @@ class TestFastAPIImports(unittest.TestCase):
             self.assertTrue(hasattr(routers, 'router'))
         except ImportError as e:
             self.skipTest(f"Routers not available: {e}")
-    
+
     def test_schemas_import(self):
         """Test schemas module imports."""
         try:
@@ -49,7 +49,7 @@ class TestFastAPIImports(unittest.TestCase):
             self.assertTrue(hasattr(schemas, 'PredictionResponse'))
         except ImportError as e:
             self.skipTest(f"Schemas not available: {e}")
-    
+
     def test_dependencies_import(self):
         """Test dependencies module imports."""
         try:
@@ -61,7 +61,7 @@ class TestFastAPIImports(unittest.TestCase):
 
 class TestConfigImports(unittest.TestCase):
     """Test configuration module imports."""
-    
+
     def test_settings_import(self):
         """Test settings can be imported."""
         try:
@@ -69,7 +69,7 @@ class TestConfigImports(unittest.TestCase):
             self.assertIsNotNone(settings)
         except ImportError as e:
             self.skipTest(f"Settings not available: {e}")
-    
+
     def test_config_package(self):
         """Test config package exists."""
         config_dir = PROJECT_ROOT / 'inference_server' / 'config'
@@ -79,7 +79,7 @@ class TestConfigImports(unittest.TestCase):
 
 class TestEngineImports(unittest.TestCase):
     """Test inference engine module imports."""
-    
+
     def test_pytorch_inference_import(self):
         """Test PyTorch inference engine imports."""
         try:
@@ -87,7 +87,7 @@ class TestEngineImports(unittest.TestCase):
             self.assertIsNotNone(pytorch_inference)
         except ImportError as e:
             self.skipTest(f"PyTorch inference not available: {e}")
-    
+
     def test_onnx_inference_import(self):
         """Test ONNX inference engine imports."""
         try:
@@ -99,12 +99,12 @@ class TestEngineImports(unittest.TestCase):
 
 class TestFiltersImports(unittest.TestCase):
     """Test filter module imports."""
-    
+
     def test_filters_package(self):
         """Test filters package exists."""
         filters_dir = PROJECT_ROOT / 'inference_server' / 'filters'
         self.assertTrue(filters_dir.exists())
-    
+
     def test_validation_filters(self):
         """Test validation filters can be imported."""
         try:
@@ -116,7 +116,7 @@ class TestFiltersImports(unittest.TestCase):
 
 class TestUtilsImports(unittest.TestCase):
     """Test utility module imports."""
-    
+
     def test_utils_package(self):
         """Test utils package exists."""
         utils_dir = PROJECT_ROOT / 'inference_server' / 'utils'
@@ -125,17 +125,17 @@ class TestUtilsImports(unittest.TestCase):
 
 class TestSrcModules(unittest.TestCase):
     """Test src directory modules."""
-    
+
     def test_src_structure(self):
         """Test src directory structure."""
         src_dir = PROJECT_ROOT / 'src'
         self.assertTrue(src_dir.exists(), "src/ directory should exist")
-        
+
         expected_subdirs = ['training', 'conversion', 'deployment', 'utils']
         for subdir in expected_subdirs:
             subdir_path = src_dir / subdir
             self.assertTrue(subdir_path.exists(), f"src/{subdir}/ should exist")
-    
+
     def test_training_imports(self):
         """Test training modules import."""
         try:
@@ -143,7 +143,7 @@ class TestSrcModules(unittest.TestCase):
             self.assertIsNotNone(base_training)
         except ImportError as e:
             self.skipTest(f"Training module not available: {e}")
-    
+
     def test_utils_imports(self):
         """Test utils modules import."""
         try:
@@ -155,19 +155,19 @@ class TestSrcModules(unittest.TestCase):
 
 class TestSchemaValidation(unittest.TestCase):
     """Test Pydantic schema validation."""
-    
+
     def test_prediction_response_schema(self):
         """Test PredictionResponse schema."""
         try:
             from inference_server.fastapi_app.schemas import PredictionResponse, PredictionResult
-            
+
             # Create a prediction result (using alias 'class' for class_name field)
             prediction = PredictionResult(**{
                 "class": "army worm",
                 "class_id": 0,
                 "confidence": 0.95
             })
-            
+
             # Test valid response
             response = PredictionResponse(
                 status="success",
@@ -179,13 +179,14 @@ class TestSchemaValidation(unittest.TestCase):
             self.skipTest(f"Schemas not available: {e}")
         except Exception as e:
             self.skipTest(f"Schema test failed: {e}")
-    
+
     def test_health_response_schema(self):
         """Test HealthResponse schema if exists."""
         try:
-            from inference_server.fastapi_app.schemas import HealthResponse, ModelInfo
             from datetime import datetime
-            
+
+            from inference_server.fastapi_app.schemas import HealthResponse, ModelInfo
+
             model_info = ModelInfo(loaded=True, info={"version": "1.0.0"})
             response = HealthResponse(
                 status="healthy",
@@ -202,7 +203,7 @@ class TestSchemaValidation(unittest.TestCase):
 
 class TestConnectionTracker(unittest.TestCase):
     """Test connection tracking functionality."""
-    
+
     def test_tracker_import(self):
         """Test connection tracker imports."""
         try:
@@ -210,7 +211,7 @@ class TestConnectionTracker(unittest.TestCase):
             self.assertIsNotNone(connection_tracker)
         except ImportError as e:
             self.skipTest(f"connection_tracker not available: {e}")
-    
+
     def test_tracker_module_exists(self):
         """Test tracker module exists."""
         tracker_file = PROJECT_ROOT / 'inference_server' / 'fastapi_app' / 'connection_tracker.py'
@@ -219,7 +220,7 @@ class TestConnectionTracker(unittest.TestCase):
 
 class TestAppManagement(unittest.TestCase):
     """Test app management functionality."""
-    
+
     def test_app_management_import(self):
         """Test app management imports."""
         try:
@@ -231,7 +232,7 @@ class TestAppManagement(unittest.TestCase):
 
 class TestProjectStructure(unittest.TestCase):
     """Test overall project structure."""
-    
+
     def test_required_directories(self):
         """Test required directories exist."""
         required_dirs = [
@@ -244,11 +245,11 @@ class TestProjectStructure(unittest.TestCase):
             'tests',
             'configs',
         ]
-        
+
         for dir_path in required_dirs:
             full_path = PROJECT_ROOT / dir_path
             self.assertTrue(full_path.exists(), f"Missing required directory: {dir_path}")
-    
+
     def test_required_files(self):
         """Test required files exist."""
         required_files = [
@@ -258,16 +259,16 @@ class TestProjectStructure(unittest.TestCase):
             'inference_server/__init__.py',
             'inference_server/fastapi_app/__init__.py',
         ]
-        
+
         for file_path in required_files:
             full_path = PROJECT_ROOT / file_path
             self.assertTrue(full_path.exists(), f"Missing required file: {file_path}")
-    
+
     def test_gitignore_exists(self):
         """Test .gitignore exists."""
         gitignore = PROJECT_ROOT / '.gitignore'
         self.assertTrue(gitignore.exists())
-    
+
     def test_ci_workflow_exists(self):
         """Test CI workflow exists."""
         ci_workflow = PROJECT_ROOT / '.github' / 'workflows' / 'ci.yml'
@@ -276,36 +277,36 @@ class TestProjectStructure(unittest.TestCase):
 
 class TestConfigFiles(unittest.TestCase):
     """Test configuration files."""
-    
+
     def test_pyproject_toml(self):
         """Test pyproject.toml is valid."""
         pyproject = PROJECT_ROOT / 'pyproject.toml'
         self.assertTrue(pyproject.exists())
-        
+
         content = pyproject.read_text()
         self.assertIn('[tool.pytest', content)
         self.assertIn('[tool.ruff', content)
-    
+
     def test_pyrightconfig(self):
         """Test pyrightconfig.json exists."""
         pyright_config = PROJECT_ROOT / 'pyrightconfig.json'
         self.assertTrue(pyright_config.exists())
-        
+
         content = json.loads(pyright_config.read_text())
         self.assertIn('include', content)
 
 
 class TestEnvironmentSafety(unittest.TestCase):
     """Test environment safety measures."""
-    
+
     def test_no_hardcoded_secrets(self):
         """Test no hardcoded secrets in config files."""
         sensitive_patterns = ['password=', 'secret=', 'api_key=', 'token=']
-        
+
         config_files = [
             PROJECT_ROOT / 'inference_server' / 'config' / 'settings.py',
         ]
-        
+
         for config_file in config_files:
             if config_file.exists():
                 content = config_file.read_text().lower()
@@ -317,7 +318,7 @@ class TestEnvironmentSafety(unittest.TestCase):
                             if pattern in line and not line.strip().startswith('#'):
                                 if 'os.getenv' not in line and 'environ' not in line:
                                     self.fail(f"Potential hardcoded secret in {config_file}: {pattern}")
-    
+
     def test_env_example_exists(self):
         """Test .env.example exists for reference."""
         env_example = PROJECT_ROOT / 'inference_server' / '.env.example'
