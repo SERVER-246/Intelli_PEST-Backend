@@ -1,5 +1,6 @@
 # Intelli-PEST Backend
 
+[![CI](https://github.com/SERVER-246/Intelli_PEST-Backend/actions/workflows/ci.yml/badge.svg)](https://github.com/SERVER-246/Intelli_PEST-Backend/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)]()
 [![PyTorch 2.3+](https://img.shields.io/badge/PyTorch-2.3%2B-red)]()
 [![TensorFlow 2.14+](https://img.shields.io/badge/TensorFlow-2.14%2B-orange)]()
