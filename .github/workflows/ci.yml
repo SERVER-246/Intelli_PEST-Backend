@@ -62,11 +62,13 @@ jobs:
         run: |
           pip install pyright
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -r inference_server/requirements.txt
+          pip install -r inference_server/requirements.txt || true
 
       - name: Run pyright
         run: pyright --warnings
         continue-on-error: true # Warning only for now
+        env:
+          PYTHONPATH: "."
 
   test:
     name: Test Suite
@@ -85,8 +87,14 @@ jobs:
         run: |
           pip install pytest pytest-cov pytest-timeout
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install -r inference_server/requirements.txt
+          pip install -r inference_server/requirements.txt || true
           pip install -r knowledge_distillation/requirements.txt || true
+
+      - name: Verify test collection
+        run: |
+          python -m pytest tests/ black_ops_training/tests/ --collect-only -q
+        env:
+          PYTHONPATH: "."
 
       - name: Run tests
         run: |
@@ -94,21 +102,24 @@ jobs:
             --cov=inference_server \
             --cov=black_ops_training \
             --cov-report=term-missing \
+            --cov-report=xml \
             --timeout=120 \
-            -v \
-            --ignore=tests/test_gpu.py \
-            -x
+            -v
         env:
           CUDA_VISIBLE_DEVICES: ""
           CI: "true"
+          PYTHONPATH: "."
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-report
-          path: .coverage
+          path: |
+            .coverage
+            coverage.xml
           retention-days: 7
+          if-no-files-found: ignore
 
   build-check:
     name: Build Verification
