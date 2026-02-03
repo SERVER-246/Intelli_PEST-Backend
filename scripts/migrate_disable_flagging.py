@@ -11,13 +11,14 @@ Run this once after the flagging system changes.
 """
 
 import json
-import shutil
 import os
-from pathlib import Path
-from datetime import datetime
+import shutil
 
 # Add parent to path
 import sys
+from datetime import datetime
+from pathlib import Path
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -26,7 +27,7 @@ def unflag_all_users(users_dir: Path) -> int:
     count = 0
     for filepath in users_dir.glob("*.json"):
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 data = json.load(f)
             
             if data.get("is_flagged", False):
@@ -70,7 +71,7 @@ def redistribute_flagged_images(images_dir: Path, metadata_dir: Path) -> dict:
             metadata_file = metadata_dir / f"{image_hash}.json"
             
             if metadata_file.exists():
-                with open(metadata_file, "r") as f:
+                with open(metadata_file) as f:
                     metadata = json.load(f)
                 
                 # Determine where to move based on feedback

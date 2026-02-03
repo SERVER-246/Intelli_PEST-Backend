@@ -1,8 +1,9 @@
 """Test 2G/slow connection improvements"""
-import requests
 import json
-from pathlib import Path
 import time
+from pathlib import Path
+
+import requests
 
 base = 'http://localhost:8000'
 API_KEY = 'ip_test_key_intelli_pest_2025'
@@ -35,7 +36,7 @@ with open(test_img, 'rb') as f:
         'Accept-Encoding': 'gzip, deflate'
     }
     start = time.time()
-    r = requests.post(f'{base}/api/v1/predict?include_probabilities=true', 
+    r = requests.post(f'{base}/api/v1/predict?include_probabilities=true',
                      files={'image': f}, headers=headers, timeout=60)
     elapsed = time.time() - start
 
@@ -62,7 +63,7 @@ with open(test_img, 'rb') as f:
         'Accept-Encoding': 'gzip, deflate'
     }
     start = time.time()
-    r_lite = requests.post(f'{base}/api/v1/predict?lite=true', 
+    r_lite = requests.post(f'{base}/api/v1/predict?lite=true',
                           files={'image': f}, headers=headers, timeout=60)
     elapsed_lite = time.time() - start
 

@@ -1,8 +1,9 @@
 """Test slow connection support features"""
-import requests
 import json
 import time
 from pathlib import Path
+
+import requests
 
 base = 'http://localhost:8000'
 API_KEY = 'ip_test_key_intelli_pest_2025'
@@ -68,7 +69,7 @@ with open(test_img, 'rb') as f:
         'X-Connection-Info': 'type:2g;quality:2;speed:45',
         'Accept-Encoding': 'gzip, deflate'
     }
-    r = requests.post(f'{base}/api/v1/predict', 
+    r = requests.post(f'{base}/api/v1/predict',
                      files={'image': f}, headers=headers, timeout=60)
 print(f'   Status: {r.status_code}')
 print(f'   GZIP: {r.headers.get("Content-Encoding", "none")}')
@@ -81,8 +82,8 @@ else:
 print('\n3. TESTING LITE MODE')
 print('-'*40)
 with open(test_img, 'rb') as f:
-    r = requests.post(f'{base}/api/v1/predict?lite=true', 
-                     files={'image': f}, 
+    r = requests.post(f'{base}/api/v1/predict?lite=true',
+                     files={'image': f},
                      headers={'X-API-Key': API_KEY},
                      timeout=60)
 print(f'   Status: {r.status_code}')
@@ -99,13 +100,13 @@ else:
 print('\n4. COMPARING FULL VS LITE RESPONSE SIZES')
 print('-'*40)
 with open(test_img, 'rb') as f:
-    r_full = requests.post(f'{base}/api/v1/predict?include_probabilities=true', 
-                          files={'image': f}, 
+    r_full = requests.post(f'{base}/api/v1/predict?include_probabilities=true',
+                          files={'image': f},
                           headers={'X-API-Key': API_KEY, 'Accept-Encoding': 'gzip'},
                           timeout=60)
 with open(test_img, 'rb') as f:
-    r_lite = requests.post(f'{base}/api/v1/predict?lite=true', 
-                          files={'image': f}, 
+    r_lite = requests.post(f'{base}/api/v1/predict?lite=true',
+                          files={'image': f},
                           headers={'X-API-Key': API_KEY, 'Accept-Encoding': 'gzip'},
                           timeout=60)
 full_size = len(r_full.content)
@@ -117,7 +118,7 @@ print(f'   Lite response: {lite_size} bytes')
 print(f'   Size reduction: {reduction:.1f}%')
 
 # 2G simulation
-print(f'\n   2G Download Time (50 Kbps):')
+print('\n   2G Download Time (50 Kbps):')
 print(f'   Full: {full_size/6250:.2f}s')
 print(f'   Lite: {lite_size/6250:.2f}s')
 

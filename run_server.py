@@ -2,9 +2,9 @@
 """
 Simple server startup script with model loading.
 """
+import logging
 import os
 import sys
-import logging
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -50,52 +50,53 @@ CLASS_NAMES = [
 
 if __name__ == "__main__":
     import uvicorn
-    from inference_server.fastapi_app.main import create_app
+
     from inference_server.fastapi_app.dependencies import set_api_key_manager
-    from inference_server.security import APIKeyManager
-    from inference_server.feedback import init_feedback_manager, init_user_tracker, init_data_collector
+    from inference_server.fastapi_app.main import create_app
+    from inference_server.feedback import init_data_collector, init_feedback_manager, init_user_tracker
     from inference_server.feedback.database import init_database_manager
+    from inference_server.security import APIKeyManager
     from inference_server.training import get_retrain_manager
-    
+
     print("=" * 60)
     print("SUGARCANE PEST DETECTION INFERENCE SERVER")
     print("=" * 60)
     print(f"Model: {MODEL_PATH}")
     print(f"Format: {DEFAULT_FORMAT}")
-    
+
     # Use a fixed default API key for testing
     DEFAULT_API_KEY = "ip_test_key_intelli_pest_2025"
-    
+
     # Create API manager and register the default key
     api_manager = APIKeyManager()
     api_manager.register_static_key(DEFAULT_API_KEY, tier="admin", name="default_test_key")
     set_api_key_manager(api_manager)
-    
+
     # Initialize feedback and tracking systems
     feedback_dir = os.path.join(os.path.dirname(__file__), "feedback_data")
-    
+
     # Initialize SQLite database (MUST BE FIRST)
     db_path = os.path.join(feedback_dir, "intellipest.db")
     db_manager = init_database_manager(db_path=db_path)
     print(f"Database: {db_path}")
-    
+
     # Log server start
     db_manager.log_system_event("server_start", "main", "Inference server starting",
                                 event_data={"model_path": MODEL_PATH, "api_key": DEFAULT_API_KEY[:20] + "..."})
-    
+
     # Initialize user tracker
     user_tracker = init_user_tracker(
         data_dir=os.path.join(feedback_dir, "users")
     )
     print(f"User tracker: {os.path.join(feedback_dir, 'users')}")
-    
+
     # Initialize data collector
     data_collector = init_data_collector(
         base_dir=feedback_dir,
         class_names=CLASS_NAMES,
     )
     print(f"Data collector: {feedback_dir}")
-    
+
     # Initialize feedback manager
     feedback_mgr = init_feedback_manager(
         feedback_dir=feedback_dir,
@@ -104,40 +105,40 @@ if __name__ == "__main__":
         class_names=CLASS_NAMES,
     )
     print(f"Feedback system: {feedback_dir}")
-    
+
     # Initialize retraining manager with auto-scheduler
     print("Initializing retraining system...")
     retrain_manager = get_retrain_manager(
         model_path=MODEL_PATH,
         feedback_dir=os.path.join(feedback_dir, "images"),
     )
-    
+
     # Start the auto-retraining scheduler (checks every 5 minutes)
     retrain_manager.start_auto_scheduler(check_interval_minutes=5)
-    print(f"Retraining scheduler: ACTIVE (checks every 5 min)")
+    print("Retraining scheduler: ACTIVE (checks every 5 min)")
     print(f"  Thresholds: {retrain_manager.config.min_images_per_class}/class or {retrain_manager.config.min_total_images} total")
     status = retrain_manager.get_status()
     print(f"  Current feedback images: {status.total_feedback_images}")
     print(f"  Ready to retrain: {status.ready_to_retrain}")
-    
+
     print("")
     print("=" * 60)
     print("DEFAULT API KEY (use this for all requests):")
     print(f"  {DEFAULT_API_KEY}")
     print("=" * 60)
     print("")
-    
+
     # Create app with model
     app = create_app(
         model_path=MODEL_PATH,
         model_format=DEFAULT_FORMAT,
     )
-    
+
     print("Starting server on http://0.0.0.0:8000")
     print("API Documentation: http://localhost:8000/docs")
     print("Concurrent connections: 100+ (async support enabled)")
     print("=" * 60)
-    
+
     # Configure uvicorn logging with timestamps (using uvicorn's default access format)
     log_config = {
         "version": 1,
@@ -174,7 +175,7 @@ if __name__ == "__main__":
             "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
         },
     }
-    
+
     uvicorn.run(
         app,
         host="0.0.0.0",

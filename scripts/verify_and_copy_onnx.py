@@ -5,12 +5,12 @@ ONNX Model Verification and Copy Script
 Verifies all 11 original ONNX models and copies them to the compatible folder.
 """
 
-import os
-import sys
 import json
+import os
 import shutil
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 
@@ -187,7 +187,7 @@ def main():
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=2)
             else:
-                print(f"  ⚠ Model has issues, not copied")
+                print("  ⚠ Model has issues, not copied")
         else:
             print(f"  ✗ Error: {result['error']}")
     
@@ -196,7 +196,7 @@ def main():
     with open(labels_path, 'w') as f:
         for idx in sorted(CLASS_NAMES.keys()):
             f.write(f"{CLASS_NAMES[idx]}\n")
-    print(f"\n✓ Created labels.txt")
+    print("\n✓ Created labels.txt")
     
     # Save verification report
     results['summary'] = {

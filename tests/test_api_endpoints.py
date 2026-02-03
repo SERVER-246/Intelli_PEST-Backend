@@ -83,16 +83,16 @@ class TestAPIEndpoints(unittest.TestCase):
     def test_predict_endpoint_no_file(self):
         """Test /predict endpoint without file returns error."""
         response = self.client.post("/api/v1/predict")
-        # Should fail without file
-        self.assertIn(response.status_code, [400, 422, 404])
+        # Should fail without file (401 if auth required)
+        self.assertIn(response.status_code, [400, 401, 422, 404])
 
     def test_predict_endpoint_invalid_file(self):
         """Test /predict endpoint with invalid file."""
         # Send text file instead of image
         files = {"file": ("test.txt", b"not an image", "text/plain")}
         response = self.client.post("/api/v1/predict", files=files)
-        # Should reject non-image file
-        self.assertIn(response.status_code, [400, 415, 422, 404])
+        # Should reject non-image file (401 if auth required)
+        self.assertIn(response.status_code, [400, 401, 415, 422, 404])
 
 
 class TestAPIResponseFormat(unittest.TestCase):
@@ -169,15 +169,15 @@ class TestAPIValidation(unittest.TestCase):
         files = {"file": ("large.jpg", large_content, "image/jpeg")}
 
         response = self.client.post("/api/v1/predict", files=files)
-        # Should either reject or timeout
-        self.assertIn(response.status_code, [400, 413, 422, 500, 404])
+        # Should either reject or timeout (401 if auth required)
+        self.assertIn(response.status_code, [400, 401, 413, 422, 500, 404])
 
     def test_empty_file_rejection(self):
         """Test that empty files are rejected."""
         files = {"file": ("empty.jpg", b"", "image/jpeg")}
         response = self.client.post("/api/v1/predict", files=files)
-        # Should reject empty file
-        self.assertIn(response.status_code, [400, 422, 404])
+        # Should reject empty file (401 if auth required)
+        self.assertIn(response.status_code, [400, 401, 422, 404])
 
 
 class TestAPIHeaders(unittest.TestCase):

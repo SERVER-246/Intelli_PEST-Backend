@@ -9,11 +9,11 @@ Verifies all TFLite and ONNX models for:
 4. Input/output shapes are correct
 """
 
+import json
 import os
 import sys
-import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 

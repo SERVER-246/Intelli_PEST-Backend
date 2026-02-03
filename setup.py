@@ -4,13 +4,14 @@ Setup configuration for Intelli_PEST-Backend package
 Allows installation via: pip install -e .
 """
 
-from setuptools import setup, find_packages
 from pathlib import Path
+
+from setuptools import find_packages, setup
 
 # Read requirements from TFLite requirements file
 requirements_path = Path(__file__).parent / "requirements_tflite.txt"
 requirements = [
-    line.strip() 
+    line.strip()
     for line in requirements_path.read_text().splitlines()
     if line.strip() and not line.startswith('#')
 ]

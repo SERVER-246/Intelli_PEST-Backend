@@ -3,9 +3,9 @@
 Generate comprehensive Excel report from database.
 Exports all tracking data to an Excel file for analysis.
 """
+import json
 import os
 import sys
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils.dataframe import dataframe_to_rows
     OPENPYXL_AVAILABLE = True
 except ImportError:

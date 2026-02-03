@@ -8,18 +8,18 @@ Author: Knowledge Distillation Pipeline
 Date: 2024-12-23
 """
 
-import os
 import json
 import logging
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
+import os
 from collections import Counter
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-import torch
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-from torchvision import transforms
-from PIL import Image
 import numpy as np
+import torch
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+from torchvision import transforms
 
 logger = logging.getLogger(__name__)
 
@@ -27,26 +27,26 @@ logger = logging.getLogger(__name__)
 class PestDataset(Dataset):
     """
     Custom Dataset for Pest Classification.
-    
+
     Supports:
     - ImageFolder-style directory structure
     - Proper class mapping with logging
     - Data augmentation
     - Weighted sampling for imbalanced classes
     """
-    
+
     def __init__(
         self,
         root_dir: str,
-        transform: Optional[transforms.Compose] = None,
-        class_mapping: Optional[Dict[str, int]] = None,
+        transform: transforms.Compose | None = None,
+        class_mapping: dict[str, int] | None = None,
         split: str = "train",
         train_ratio: float = 0.8,
         seed: int = 42
     ):
         """
         Initialize the dataset.
-        
+
         Args:
             root_dir: Root directory containing class subfolders
             transform: Torchvision transforms to apply
@@ -60,146 +60,150 @@ class PestDataset(Dataset):
         self.split = split
         self.train_ratio = train_ratio
         self.seed = seed
-        
+
         # Discover classes and create mapping
         self.class_names = sorted([
-            d.name for d in self.root_dir.iterdir() 
+            d.name for d in self.root_dir.iterdir()
             if d.is_dir() and not d.name.startswith('.')
         ])
-        
+
         if class_mapping:
             self.class_to_idx = class_mapping
         else:
             self.class_to_idx = {name: idx for idx, name in enumerate(self.class_names)}
-        
+
         self.idx_to_class = {v: k for k, v in self.class_to_idx.items()}
         self.num_classes = len(self.class_names)
-        
+
         # Load all image paths
         self.samples = self._load_samples()
-        
+
         # Split into train/val
         self._split_data()
-        
+
         # Calculate class weights for balanced sampling
         self.class_weights = self._calculate_class_weights()
-        
+
         # Log dataset info
         self._log_dataset_info()
-    
-    def _load_samples(self) -> List[Tuple[str, int]]:
+
+    def _load_samples(self) -> list[tuple[str, int]]:
         """Load all image paths and labels."""
         samples = []
         valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
-        
+
         for class_name in self.class_names:
             class_dir = self.root_dir / class_name
             class_idx = self.class_to_idx[class_name]
-            
+
             for img_path in class_dir.iterdir():
                 if img_path.suffix.lower() in valid_extensions:
                     samples.append((str(img_path), class_idx))
-        
+
         return samples
-    
+
     def _split_data(self):
         """Split data into train and validation sets."""
         np.random.seed(self.seed)
-        
+
         # Group samples by class for stratified split
         class_samples = {}
         for path, label in self.samples:
             if label not in class_samples:
                 class_samples[label] = []
             class_samples[label].append((path, label))
-        
+
         train_samples = []
         val_samples = []
-        
+
         for label, samples in class_samples.items():
             np.random.shuffle(samples)
             split_idx = int(len(samples) * self.train_ratio)
             train_samples.extend(samples[:split_idx])
             val_samples.extend(samples[split_idx:])
-        
+
         if self.split == "train":
             self.samples = train_samples
         else:
             self.samples = val_samples
-        
+
         # Shuffle the samples
         np.random.shuffle(self.samples)
-    
+
     def _calculate_class_weights(self) -> torch.Tensor:
         """Calculate class weights for balanced sampling."""
         class_counts = Counter(label for _, label in self.samples)
         total = sum(class_counts.values())
-        
+
         weights = torch.zeros(self.num_classes)
         for class_idx, count in class_counts.items():
             weights[class_idx] = total / (self.num_classes * count)
-        
+
         return weights
-    
+
     def _log_dataset_info(self):
         """Log dataset statistics."""
         class_counts = Counter(label for _, label in self.samples)
-        
+
         logger.info(f"\n{'='*60}")
         logger.info(f"Dataset: {self.split.upper()}")
         logger.info(f"{'='*60}")
         logger.info(f"Root directory: {self.root_dir}")
         logger.info(f"Number of classes: {self.num_classes}")
         logger.info(f"Total samples: {len(self.samples)}")
-        logger.info(f"\nClass Distribution:")
+        logger.info("\nClass Distribution:")
         logger.info(f"{'-'*40}")
-        
+
         for idx in sorted(class_counts.keys()):
             class_name = self.idx_to_class[idx]
             count = class_counts[idx]
             percentage = count / len(self.samples) * 100
             logger.info(f"  [{idx:2d}] {class_name:20s}: {count:5d} ({percentage:5.1f}%)")
-        
+
         logger.info(f"{'='*60}\n")
-    
-    def get_sample_weights(self) -> List[float]:
+
+    def get_sample_weights(self) -> list[float]:
         """Get sample weights for WeightedRandomSampler."""
         return [self.class_weights[label].item() for _, label in self.samples]
-    
+
     def __len__(self) -> int:
         return len(self.samples)
-    
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
         img_path, label = self.samples[idx]
-        
+
         # Load image
         image = Image.open(img_path).convert('RGB')
-        
+
         # Apply transforms
         if self.transform:
             image = self.transform(image)
-        
+
         return image, label
 
 
 def get_transforms(
     image_size: int = 256,
     is_training: bool = True,
-    normalize_mean: List[float] = [0.485, 0.456, 0.406],
-    normalize_std: List[float] = [0.229, 0.224, 0.225]
+    normalize_mean: list[float] = None,
+    normalize_std: list[float] = None
 ) -> transforms.Compose:
     """
     Get data transforms for training or validation.
-    
+
     Args:
         image_size: Target image size
         is_training: Whether to use training augmentations
         normalize_mean: Normalization mean values
         normalize_std: Normalization std values
-        
+
     Returns:
         Composed transforms
     """
+    if normalize_std is None:
+        normalize_std = [0.229, 0.224, 0.225]
+    if normalize_mean is None:
+        normalize_mean = [0.485, 0.456, 0.406]
     if is_training:
         transform = transforms.Compose([
             transforms.Resize((image_size + 32, image_size + 32)),
@@ -227,7 +231,7 @@ def get_transforms(
             transforms.ToTensor(),
             transforms.Normalize(mean=normalize_mean, std=normalize_std)
         ])
-    
+
     return transform
 
 
@@ -239,10 +243,10 @@ def create_dataloaders(
     train_ratio: float = 0.8,
     use_weighted_sampling: bool = True,
     seed: int = 42
-) -> Tuple[DataLoader, DataLoader, Dict[str, Any]]:
+) -> tuple[DataLoader, DataLoader, dict[str, Any]]:
     """
     Create train and validation dataloaders.
-    
+
     Args:
         data_dir: Path to dataset directory
         batch_size: Batch size
@@ -251,7 +255,7 @@ def create_dataloaders(
         train_ratio: Train/val split ratio
         use_weighted_sampling: Whether to use weighted sampling for imbalanced classes
         seed: Random seed
-        
+
     Returns:
         train_loader: Training dataloader
         val_loader: Validation dataloader
@@ -260,7 +264,7 @@ def create_dataloaders(
     # Create datasets
     train_transform = get_transforms(image_size, is_training=True)
     val_transform = get_transforms(image_size, is_training=False)
-    
+
     train_dataset = PestDataset(
         root_dir=data_dir,
         transform=train_transform,
@@ -268,7 +272,7 @@ def create_dataloaders(
         train_ratio=train_ratio,
         seed=seed
     )
-    
+
     val_dataset = PestDataset(
         root_dir=data_dir,
         transform=val_transform,
@@ -276,7 +280,7 @@ def create_dataloaders(
         train_ratio=train_ratio,
         seed=seed
     )
-    
+
     # Create samplers
     if use_weighted_sampling:
         train_sampler = WeightedRandomSampler(
@@ -288,7 +292,7 @@ def create_dataloaders(
     else:
         train_sampler = None
         shuffle = True
-    
+
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
@@ -299,7 +303,7 @@ def create_dataloaders(
         pin_memory=True,
         drop_last=True
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -307,7 +311,7 @@ def create_dataloaders(
         num_workers=num_workers,
         pin_memory=True
     )
-    
+
     # Compile dataset info
     dataset_info = {
         "num_classes": train_dataset.num_classes,
@@ -318,12 +322,12 @@ def create_dataloaders(
         "val_samples": len(val_dataset),
         "class_weights": train_dataset.class_weights.tolist()
     }
-    
+
     return train_loader, val_loader, dataset_info
 
 
 def save_class_mapping(
-    class_mapping: Dict[str, int],
+    class_mapping: dict[str, int],
     save_path: str
 ):
     """Save class mapping to JSON file."""
@@ -332,18 +336,18 @@ def save_class_mapping(
     logger.info(f"Class mapping saved to {save_path}")
 
 
-def load_class_mapping(load_path: str) -> Dict[str, int]:
+def load_class_mapping(load_path: str) -> dict[str, int]:
     """Load class mapping from JSON file."""
-    with open(load_path, 'r') as f:
+    with open(load_path) as f:
         return json.load(f)
 
 
 if __name__ == "__main__":
     # Test the dataset
     logging.basicConfig(level=logging.INFO)
-    
+
     data_dir = r"D:\IMAGE DATASET"
-    
+
     train_loader, val_loader, info = create_dataloaders(
         data_dir=data_dir,
         batch_size=32,
@@ -351,12 +355,12 @@ if __name__ == "__main__":
         num_workers=0,  # Use 0 for testing
         use_weighted_sampling=True
     )
-    
-    print(f"\nDataset Info:")
+
+    print("\nDataset Info:")
     print(f"  Classes: {info['num_classes']}")
     print(f"  Train samples: {info['train_samples']}")
     print(f"  Val samples: {info['val_samples']}")
-    
+
     # Test batch loading
     images, labels = next(iter(train_loader))
     print(f"\nBatch shape: {images.shape}")
