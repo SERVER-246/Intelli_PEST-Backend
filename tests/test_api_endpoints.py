@@ -126,12 +126,13 @@ class TestAPIResponseFormat(unittest.TestCase):
         """Test error responses have proper format."""
         response = self.client.post("/api/v1/predict")
 
+        # 401 means auth is required - that's still a valid error response
         if response.status_code >= 400:
             data = response.json()
             # Should have detail field for FastAPI errors
             self.assertTrue(
                 'detail' in data or 'error' in data or 'message' in data,
-                "Error response should have detail/error/message field"
+                f"Error response (status {response.status_code}) should have detail/error/message field. Got: {data}"
             )
 
 
@@ -255,8 +256,8 @@ class TestMockedPrediction(unittest.TestCase):
                 files = {"file": ("test.jpg", jpeg_header, "image/jpeg")}
 
                 response = client.post("/api/v1/predict", files=files)
-                # May fail validation but shouldn't crash
-                self.assertIn(response.status_code, [200, 400, 422, 500, 404])
+                # May fail validation or require auth but shouldn't crash
+                self.assertIn(response.status_code, [200, 400, 401, 422, 500, 404])
 
         except ImportError as e:
             self.skipTest(f"Dependencies not available: {e}")
