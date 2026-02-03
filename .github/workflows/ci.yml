@@ -137,5 +137,5 @@ jobs:
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r inference_server/requirements.txt
-          python -c "from inference_server.fastapi_app import app; print('✅ FastAPI app imports successfully')"
-          python -c "from black_ops_training.ghost_trainer import GhostTrainer; print('✅ GhostTrainer imports successfully')" || true
+          python -c "from inference_server.fastapi_app import create_app; print('✅ FastAPI app imports successfully')"
+          python -c "from inference_server.config import settings; print('✅ Settings imports successfully')"
