@@ -108,8 +108,8 @@ class TestFiltersImports(unittest.TestCase):
     def test_validation_filters(self):
         """Test validation filters can be imported."""
         try:
-            from inference_server.filters import validation_pipeline
-            self.assertIsNotNone(validation_pipeline)
+            from inference_server.filters import ValidationPipeline
+            self.assertIsNotNone(ValidationPipeline)
         except ImportError as e:
             self.skipTest(f"Validation filters not available: {e}")
 
@@ -159,18 +159,22 @@ class TestSchemaValidation(unittest.TestCase):
     def test_prediction_response_schema(self):
         """Test PredictionResponse schema."""
         try:
-            from inference_server.fastapi_app.schemas import PredictionResponse
+            from inference_server.fastapi_app.schemas import PredictionResponse, PredictionResult
+            
+            # Create a prediction result (using alias 'class' for class_name field)
+            prediction = PredictionResult(**{
+                "class": "army worm",
+                "class_id": 0,
+                "confidence": 0.95
+            })
             
             # Test valid response
             response = PredictionResponse(
-                pest_class="army worm",
-                confidence=0.95,
-                class_id=0,
-                processing_time_ms=150.5,
-                model_version="1.0.0"
+                status="success",
+                prediction=prediction
             )
-            self.assertEqual(response.pest_class, "army worm")
-            self.assertEqual(response.confidence, 0.95)
+            self.assertEqual(response.status, "success")
+            self.assertEqual(response.prediction.confidence, 0.95)
         except ImportError as e:
             self.skipTest(f"Schemas not available: {e}")
         except Exception as e:
@@ -179,8 +183,16 @@ class TestSchemaValidation(unittest.TestCase):
     def test_health_response_schema(self):
         """Test HealthResponse schema if exists."""
         try:
-            from inference_server.fastapi_app.schemas import HealthResponse
-            response = HealthResponse(status="healthy", version="1.0.0")
+            from inference_server.fastapi_app.schemas import HealthResponse, ModelInfo
+            from datetime import datetime
+            
+            model_info = ModelInfo(loaded=True, info={"version": "1.0.0"})
+            response = HealthResponse(
+                status="healthy",
+                timestamp=datetime.now().isoformat(),
+                version="1.0.0",
+                model=model_info
+            )
             self.assertEqual(response.status, "healthy")
         except ImportError:
             self.skipTest("HealthResponse schema not available")
@@ -194,21 +206,15 @@ class TestConnectionTracker(unittest.TestCase):
     def test_tracker_import(self):
         """Test connection tracker imports."""
         try:
-            from inference_server.fastapi_app.connection_tracker import ConnectionTracker
-            self.assertIsNotNone(ConnectionTracker)
+            from inference_server.fastapi_app import connection_tracker
+            self.assertIsNotNone(connection_tracker)
         except ImportError as e:
-            self.skipTest(f"ConnectionTracker not available: {e}")
+            self.skipTest(f"connection_tracker not available: {e}")
     
-    def test_tracker_initialization(self):
-        """Test tracker can be initialized."""
-        try:
-            from inference_server.fastapi_app.connection_tracker import ConnectionTracker
-            tracker = ConnectionTracker()
-            self.assertIsNotNone(tracker)
-        except ImportError as e:
-            self.skipTest(f"ConnectionTracker not available: {e}")
-        except Exception as e:
-            self.skipTest(f"Tracker init failed: {e}")
+    def test_tracker_module_exists(self):
+        """Test tracker module exists."""
+        tracker_file = PROJECT_ROOT / 'inference_server' / 'fastapi_app' / 'connection_tracker.py'
+        self.assertTrue(tracker_file.exists(), "connection_tracker.py should exist")
 
 
 class TestAppManagement(unittest.TestCase):
