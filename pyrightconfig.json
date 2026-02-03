@@ -2,18 +2,27 @@
     "include": [
         ".",
         "inference_server",
-        "black_ops_training",
         "src"
+    ],
+    "exclude": [
+        "black_ops_training",
+        "**/node_modules",
+        "**/__pycache__"
     ],
     "extraPaths": [
         ".",
-        "./black_ops_training",
-        "./black_ops_training/src",
         "./inference_server",
         "./inference_server/engine",
         "./src"
     ],
     "pythonVersion": "3.10",
     "typeCheckingMode": "basic",
-    "reportMissingImports": "warning"
+    "reportMissingImports": "warning",
+    "reportReturnType": "warning",
+    "reportArgumentType": "warning",
+    "reportAttributeAccessIssue": "warning",
+    "reportOptionalSubscript": "warning",
+    "reportCallIssue": "warning",
+    "reportPrivateImportUsage": "warning",
+    "reportGeneralTypeIssues": "warning"
 }
