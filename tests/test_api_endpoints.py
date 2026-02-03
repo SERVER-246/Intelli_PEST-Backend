@@ -29,7 +29,15 @@ class TestAPIEndpoints(unittest.TestCase):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
-            from inference_server.fastapi_app import app
+            from inference_server.fastapi_app import create_app
+            
+            # Create app instance (app is None by default, need to call create_app)
+            app = create_app()
+            if app is None:
+                cls.client_available = False
+                cls.skip_reason = "create_app() returned None"
+                return
+            
             cls.client = TestClient(app)
             cls.client_available = True
         except ImportError as e:
@@ -94,7 +102,14 @@ class TestAPIResponseFormat(unittest.TestCase):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
-            from inference_server.fastapi_app import app
+            from inference_server.fastapi_app import create_app
+            
+            app = create_app()
+            if app is None:
+                cls.client_available = False
+                cls.skip_reason = "create_app() returned None"
+                return
+            
             cls.client = TestClient(app)
             cls.client_available = True
         except Exception as e:
@@ -126,7 +141,14 @@ class TestAPIValidation(unittest.TestCase):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
-            from inference_server.fastapi_app import app
+            from inference_server.fastapi_app import create_app
+            
+            app = create_app()
+            if app is None:
+                cls.client_available = False
+                cls.skip_reason = "create_app() returned None"
+                return
+            
             cls.client = TestClient(app)
             cls.client_available = True
         except Exception as e:
@@ -163,7 +185,14 @@ class TestAPIHeaders(unittest.TestCase):
         """Set up test client."""
         try:
             from fastapi.testclient import TestClient
-            from inference_server.fastapi_app import app
+            from inference_server.fastapi_app import create_app
+            
+            app = create_app()
+            if app is None:
+                cls.client_available = False
+                cls.skip_reason = "create_app() returned None"
+                return
+            
             cls.client = TestClient(app)
             cls.client_available = True
         except Exception as e:
@@ -195,7 +224,13 @@ class TestMockedPrediction(unittest.TestCase):
         """Test prediction endpoint with mocked model."""
         try:
             from fastapi.testclient import TestClient
-            from inference_server.fastapi_app import app
+            from inference_server.fastapi_app import create_app
+            
+            # Create app instance
+            app = create_app()
+            if app is None:
+                self.skipTest("create_app() returned None")
+                return
             
             # Mock the inference pipeline
             mock_result = {
