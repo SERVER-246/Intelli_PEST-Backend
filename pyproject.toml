@@ -70,7 +70,7 @@ known-first-party = ["inference_server", "black_ops_training", "src"]
 # Pytest Configuration
 # ============================================================
 [tool.pytest.ini_options]
-testpaths = ["tests", "black_ops_training/tests"]
+testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
 python_classes = "Test*"

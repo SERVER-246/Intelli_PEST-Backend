@@ -92,15 +92,15 @@ jobs:
 
       - name: Verify test collection
         run: |
-          python -m pytest tests/ black_ops_training/tests/ --collect-only -q
+          python -m pytest tests/ --collect-only -q
         env:
           PYTHONPATH: "."
 
       - name: Run tests
         run: |
-          python -m pytest tests/ black_ops_training/tests/ \
+          python -m pytest tests/ \
             --cov=inference_server \
-            --cov=black_ops_training \
+            --cov=src \
             --cov-report=term-missing \
             --cov-report=xml \
             --timeout=120 \
