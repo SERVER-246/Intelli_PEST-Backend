@@ -41,7 +41,7 @@ class ContentFilterResult:
     error_code: str | None = None
     error_message: str | None = None
     detected_category: str | None = None
-    analysis_details: dict[str, Any] = None
+    analysis_details: dict[str, Any] | None = None
 
     def __post_init__(self):
         if self.analysis_details is None:
@@ -177,7 +177,8 @@ class ContentFilter:
         """
         try:
             if self._face_cascade is None:
-                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                # cv2.data.haarcascades provides the path to cascade files
+                cascade_path = str(cv2.data.haarcascades) + 'haarcascade_frontalface_default.xml'  # type: ignore[attr-defined]
                 self._face_cascade = cv2.CascadeClassifier(cascade_path)
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)

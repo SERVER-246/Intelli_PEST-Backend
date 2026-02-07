@@ -82,7 +82,7 @@ class KDConfig:
     use_student_as_teacher: bool = True  # Include deployed student as a teacher
 
     # Default teacher weights (higher = more influence)
-    teacher_weights: dict[str, float] = None
+    teacher_weights: dict[str, float] | None = None
 
     def __post_init__(self):
         if self.teacher_weights is None:
@@ -148,7 +148,9 @@ class ONNXTeacher:
 
         try:
             outputs = self.session.run(None, {self.input_name: images.astype(np.float32)})
-            return outputs[0]
+            result = outputs[0]
+            # Cast to ndarray for type safety
+            return result if isinstance(result, np.ndarray) else None  # type: ignore[return-value]
         except Exception as e:
             logger.error(f"ONNX inference error for {self.name}: {e}")
             return None
@@ -363,6 +365,7 @@ class TeacherEnsemble:
 
         logger.info(f"Loading teacher models from: {models_dir}")
 
+        assert self.config.teacher_weights is not None, "teacher_weights should be initialized in __post_init__"
         for name in self.TEACHER_MODELS:
             path = models_dir / f"{name}.onnx"
             weight = self.config.teacher_weights.get(name, 1.0)
@@ -378,6 +381,7 @@ class TeacherEnsemble:
 
     def _add_student_teacher(self, model: nn.Module):
         """Add the deployed student model as an additional teacher."""
+        assert self.config.teacher_weights is not None, "teacher_weights should be initialized in __post_init__"
         weight = self.config.teacher_weights.get('deployed_student', 1.5)
         self.pytorch_teacher = PyTorchTeacher(
             name='deployed_student',
@@ -391,7 +395,7 @@ class TeacherEnsemble:
     def get_soft_labels(
         self,
         images: torch.Tensor,
-        temperature: float = None
+        temperature: float | None = None
     ) -> torch.Tensor:
         """
         Generate weighted soft labels from all teachers.
@@ -696,7 +700,7 @@ class SingleTeacher:
     def __init__(
         self,
         teacher_name: str,
-        teacher_path: Path,
+        teacher_path: Path | None,
         weight: float,
         num_classes: int,
         temperature: float,
@@ -754,13 +758,15 @@ class SingleTeacher:
 
         if self.is_pytorch or self.is_torchscript:
             # PyTorch and TorchScript teachers use torch tensors
-            logits = self.teacher.predict(images)
+            assert self.teacher is not None
+            logits = self.teacher.predict(images)  # type: ignore[arg-type]
             if logits is not None:
-                logits = logits.to(device)
+                logits = logits.to(device)  # type: ignore[union-attr]
         else:
             # ONNX teachers use numpy arrays
+            assert self.teacher is not None
             images_np = images.cpu().numpy()
-            logits_np = self.teacher.predict(images_np)
+            logits_np = self.teacher.predict(images_np)  # type: ignore[arg-type]
             if logits_np is None:
                 return torch.ones(batch_size, self.num_classes, device=device) / self.num_classes
             logits = torch.from_numpy(logits_np).float().to(device)
@@ -787,10 +793,11 @@ class SingleTeacher:
     def unload(self):
         """Unload teacher to free memory."""
         if self.teacher is not None:
-            if hasattr(self.teacher, 'session'):
-                self.teacher.session = None
-            if hasattr(self.teacher, 'model'):
-                self.teacher.model = None
+            # Type-specific unloading to satisfy Pylance
+            if isinstance(self.teacher, ONNXTeacher):
+                self.teacher.session = None  # type: ignore[assignment]
+            elif isinstance(self.teacher, (TorchScriptTeacher, PyTorchTeacher)):
+                self.teacher.model = None  # type: ignore[assignment]
             self.teacher = None
             logger.info(f"  Unloaded teacher: {self.name}")
 

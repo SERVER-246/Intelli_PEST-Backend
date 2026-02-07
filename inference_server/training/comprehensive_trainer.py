@@ -119,7 +119,7 @@ try:
     import torch.nn as nn
     import torch.nn.functional as F
     import torch.optim as optim
-    from torch.amp import GradScaler, autocast
+    from torch.cuda.amp import GradScaler, autocast
     from torch.utils.data import ConcatDataset, DataLoader, Dataset, WeightedRandomSampler
     from torchvision import transforms
     TORCH_AVAILABLE = True
@@ -208,6 +208,14 @@ class ComprehensiveTrainingConfig:
     # Class balancing
     use_class_weights: bool = True
     oversample_minority: bool = True
+
+    # Additional attributes for compatibility
+    teacher_dir: str = "D:/Intelli_PEST-Backend/tflite_models_compatible/onnx_models"
+    data_paths: list[str] = field(default_factory=lambda: [
+        "D:/Test-images",
+        "D:/IMAGE DATASET",
+    ])
+    num_epochs: int = 50  # Alias for epochs
 
     # Mixed precision
     use_amp: bool = True
@@ -322,6 +330,10 @@ class ComprehensiveTrainingState:
     # Version
     training_version: int = 1
 
+    # Additional state attributes
+    status: str = "idle"
+    error_message: str | None = None
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -344,8 +356,8 @@ class Full360RotationAugmentation:
         self,
         cardinal_prob: float = 0.5,
         minor_prob: float = 0.3,
-        cardinal_angles: list[int] = None,
-        minor_angles: list[int] = None
+        cardinal_angles: list[int] | None = None,
+        minor_angles: list[int] | None = None
     ):
         self.cardinal_prob = cardinal_prob
         self.minor_prob = minor_prob
@@ -375,7 +387,7 @@ class Full360RotationAugmentation:
 
         if angle != 0:
             # Use BILINEAR for quality
-            img = img.rotate(-angle, expand=True, resample=Image.BILINEAR, fillcolor=(0, 0, 0))
+            img = img.rotate(-angle, expand=True, resample=Image.Resampling.BILINEAR, fillcolor=(0, 0, 0))
 
         return img, angle
 
@@ -402,7 +414,7 @@ class ComprehensiveDataset(Dataset):
         train_ratio: float = 0.8,
         seed: int = 42,
         image_size: int = 256,
-        rotation_augmentation: Full360RotationAugmentation = None,
+        rotation_augmentation: Full360RotationAugmentation | None = None,
         is_training: bool = True
     ):
         self.data_paths = [Path(p) for p in data_paths if Path(p).exists()]
@@ -521,9 +533,9 @@ class ComprehensiveDataset(Dataset):
             img, rotation_angle = self.rotation_aug(img)
 
         # Apply other transforms
-        img = self.transform(img)
+        img_tensor: torch.Tensor = self.transform(img)  # type: ignore[assignment]
 
-        return img, label, rotation_angle
+        return img_tensor, label, rotation_angle
 
     def get_class_counts(self) -> dict[str, int]:
         """Get counts per class."""
@@ -544,12 +556,15 @@ class ComprehensiveTrainer:
     Includes checkpoint recovery for power outage survival.
     """
 
-    def __init__(self, config: ComprehensiveTrainingConfig = None):
+    def __init__(self, config: ComprehensiveTrainingConfig | None = None):
         self.config = config or ComprehensiveTrainingConfig()
 
         # Create directories
         Path(self.config.checkpoint_dir).mkdir(parents=True, exist_ok=True)
         Path(self.config.backup_dir).mkdir(parents=True, exist_ok=True)
+
+        # Output directory for logs and reports
+        self._output_dir = Path(self.config.checkpoint_dir)
 
         # State file for recovery
         self._state_file = Path(self.config.checkpoint_dir) / "training_state.json"
@@ -1227,7 +1242,9 @@ class ComprehensiveTrainer:
             logger.warning("EnhancedStudentModel not found, using MobileNetV3")
             import torchvision.models as models
             model = models.mobilenet_v3_small(weights=None)
-            model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
+            old_classifier = model.classifier[-1]
+            assert isinstance(old_classifier, nn.Linear)
+            model.classifier[-1] = nn.Linear(old_classifier.in_features, num_classes)
             model.load_state_dict(state_dict, strict=False)
 
         return model.to(device)
@@ -1244,8 +1261,9 @@ class ComprehensiveTrainer:
         # 1. Expand main classifier (classifier.6 in Sequential)
         if hasattr(model, 'classifier') and isinstance(model.classifier, nn.Sequential):
             for i in range(len(model.classifier) - 1, -1, -1):
-                if isinstance(model.classifier[i], nn.Linear):
-                    old_linear = model.classifier[i]
+                layer = model.classifier[i]
+                if isinstance(layer, nn.Linear):
+                    old_linear: nn.Linear = layer
                     in_features = old_linear.in_features
                     old_num_classes = old_linear.out_features
 
@@ -1274,8 +1292,9 @@ class ComprehensiveTrainer:
                 for stage_name, aux_clf in aux_classifiers.items():
                     if isinstance(aux_clf, nn.Sequential):
                         for j in range(len(aux_clf) - 1, -1, -1):
-                            if isinstance(aux_clf[j], nn.Linear):
-                                old_aux = aux_clf[j]
+                            aux_layer = aux_clf[j]
+                            if isinstance(aux_layer, nn.Linear):
+                                old_aux: nn.Linear = aux_layer
                                 aux_in = old_aux.in_features
                                 aux_old = old_aux.out_features
 
@@ -1442,7 +1461,7 @@ class ComprehensiveTrainer:
         criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         # Scaler
-        scaler = GradScaler('cuda') if self.config.use_amp and device == 'cuda' else None
+        scaler = GradScaler() if self.config.use_amp and device == 'cuda' else None
 
         return optimizer, scheduler, criterion, scaler
 
@@ -1496,13 +1515,13 @@ class ComprehensiveTrainer:
 
     def _ewc_loss(self, model) -> torch.Tensor:
         """Compute EWC penalty with clamping."""
-        if self._fisher_info is None:
+        if self._fisher_info is None or self._optimal_params is None:
             return torch.tensor(0.0, device=next(model.parameters()).device)
 
-        ewc_loss = 0.0
+        ewc_loss: torch.Tensor = torch.tensor(0.0, device=next(model.parameters()).device)
         for name, param in model.named_parameters():
             if name in self._fisher_info:
-                ewc_loss += (self._fisher_info[name] * (param - self._optimal_params[name]) ** 2).sum()
+                ewc_loss = ewc_loss + (self._fisher_info[name] * (param - self._optimal_params[name]) ** 2).sum()
 
         raw_loss = self.config.ewc_lambda * ewc_loss
         return torch.clamp(raw_loss, max=self.config.max_ewc_loss)
@@ -1522,7 +1541,7 @@ class ComprehensiveTrainer:
             optimizer.zero_grad()
 
             if scaler:
-                with autocast('cuda'):
+                with autocast():
                     outputs = model(images)
                     logits = outputs['logits'] if isinstance(outputs, dict) else outputs
 
@@ -1620,7 +1639,7 @@ class ComprehensiveTrainer:
             optimizer.zero_grad()
 
             if scaler:
-                with autocast('cuda'):
+                with autocast():
                     outputs = model(images)
                     logits = outputs['logits'] if isinstance(outputs, dict) else outputs
 
